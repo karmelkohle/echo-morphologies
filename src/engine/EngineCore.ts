@@ -21,8 +21,9 @@ const LANE_COUNT = 8
  *         input meter              (lanes + directions)  │   mute ramp, output meters
  *
  * `process()` below is written as those four numbered sections so a stage can
- * be swapped, rewritten or commented out on its own. Granular is the spatdsp
- * design, live; binaural is still a directionless pass-through sum.
+ * be swapped, rewritten or commented out on its own. Both DSP stages are
+ * live: granular is the spatdsp design, binaural convolves each lane with
+ * the HRIR measured nearest its direction.
  *
  * Each stage is handed buffers this class has already zeroed and ADDS into
  * them, which is both what the real DSP wants — grains accumulate, and the
@@ -67,6 +68,13 @@ export class EngineCore implements AudioEngineCore {
   private spareRight = new Float32Array(0)
   /** Tracks bypass transitions so the renderer's tails reset cleanly. */
   private binauralWasActive = true
+  /** 0 = wet chain, 1 = dry microphone; ramped so the A/B never clicks. */
+  private readonly dryMix = new SmoothedValue(0)
+  /** Ensures retireAll() runs exactly once per completed bypass fade. */
+  private grainsRetired = false
+  /** Wet render targets while the bypass fade is in motion. */
+  private wetLeft = new Float32Array(0)
+  private wetRight = new Float32Array(0)
 
   prepare(cfg: EngineConfig): void {
     this.cfg = { ...cfg }
@@ -75,6 +83,9 @@ export class EngineCore implements AudioEngineCore {
     this.monoIn = new Float32Array(maxBlockSize)
     this.silence = new Float32Array(maxBlockSize)
     this.spareRight = new Float32Array(maxBlockSize)
+    this.wetLeft = new Float32Array(maxBlockSize)
+    this.wetRight = new Float32Array(maxBlockSize)
+    this.dryMix.prepare(15, sampleRate)
 
     // The spatial resolution of the piece: how many concurrent grain streams
     // can hold distinct directions, and how many convolutions the binaural
@@ -88,6 +99,7 @@ export class EngineCore implements AudioEngineCore {
     }
 
     this.granular.prepare(this.cfg)
+    this.binaural.setLaneCount(LANE_COUNT)
     this.binaural.prepare(this.cfg)
     this.limiter.prepare(sampleRate)
 
@@ -108,6 +120,7 @@ export class EngineCore implements AudioEngineCore {
     this.inputTrim.settle()
     this.outputGain.settle()
     this.muteGain.settle()
+    this.dryMix.settle()
 
     this.granular.reset()
     this.binaural.reset()
@@ -135,9 +148,10 @@ export class EngineCore implements AudioEngineCore {
 
       // Grain parameters are read at spawn time, so plain assignment is
       // click-free by construction — each grain is born with one value and
-      // keeps it for life.
+      // keeps it for life. The bypass itself is the exception: it swaps two
+      // running signals, so it rides a ramp like the mute does.
       case ParamId.GranularEnabled:
-        granular.enabled = value >= 0.5
+        this.dryMix.setTarget(value >= 0.5 ? 0 : 1)
         break
       case ParamId.BufferSec:
         granular.bufferSec = value
@@ -219,8 +233,7 @@ export class EngineCore implements AudioEngineCore {
 
     // ═══ 2. GRANULAR SYNTHESIS ══════════════════════════════════════════════
     // The spatdsp Granular design on the DirectionalBus: ring buffer, grain
-    // scheduler, per-grain deviation draws, round-robin lane dealing. The
-    // `Granular` toggle bypasses it into a dry lane-0 pass-through.
+    // scheduler, per-grain deviation draws, round-robin lane dealing.
     //
     //   in   `mono[0..n)`, the dry capture
     //   out  `this.bus`, already zeroed — lanes are ADDED to, and each lane's
@@ -230,9 +243,6 @@ export class EngineCore implements AudioEngineCore {
     // straight into `this.bus.lanes[k]` here and skipping the call. Commenting
     // the call out is safe and yields silence, not stale audio.
 
-    this.bus.clear(n)
-    this.granular.process(mono, this.bus, n)
-
     // ═══ 3. BINAURAL RENDERING (HRTF CONVOLUTION) ═══════════════════════════
     // Each lane is convolved with the HRIR pair measured nearest to its
     // direction and the ears sum; direction changes crossfade for one block.
@@ -241,23 +251,51 @@ export class EngineCore implements AudioEngineCore {
     //   in   `this.bus`, the directional field
     //   out  `left` / `right` over [0..n), already zeroed and ADDED to
     //
-    // When granular is bypassed the renderer is bypassed with it — the
-    // reference path stays provably dry (exact gain offset, ears identical),
-    // which is what makes the A/B and the smoke test mean something.
+    // The `Granular` toggle A/Bs the whole wet path — granulation AND the
+    // renderer — against the dry microphone, through a short equal-gain fade
+    // so a dense cloud does not cut to dry with a click. Fully bypassed, the
+    // reference path is provably dry (exact gain offset, ears identical),
+    // the ring keeps recording so re-enable reads the *present* past, and
+    // in-flight grains are retired rather than paused.
 
     left.fill(0, 0, n)
     right.fill(0, 0, n)
-    if (this.granular.enabled) {
+
+    const fullyDry = this.dryMix.isSettled && this.dryMix.value === 1
+    if (fullyDry) {
+      this.granular.feed(mono, n)
+      if (!this.grainsRetired) {
+        this.granular.retireAll()
+        this.grainsRetired = true
+      }
+      this.binauralWasActive = false
+      for (let i = 0; i < n; i++) {
+        left[i] = mono[i]
+        right[i] = mono[i]
+      }
+    } else {
+      this.grainsRetired = false
+      this.bus.clear(n)
+      this.granular.process(mono, this.bus, n)
+
       if (!this.binauralWasActive) this.binaural.reset()
       this.binauralWasActive = true
-      this.binaural.process(this.bus, left, right, n)
-    } else {
-      this.binauralWasActive = false
-      const lane = this.bus.lanes[0]
-      for (let i = 0; i < n; i++) {
-        const x = lane[i]
-        left[i] += x
-        right[i] += x
+
+      if (this.dryMix.isSettled && this.dryMix.value === 0) {
+        this.binaural.process(this.bus, left, right, n)
+      } else {
+        // Mid-fade: render the wet field beside the dry capture and blend.
+        const wetL = this.wetLeft
+        const wetR = this.wetRight
+        wetL.fill(0, 0, n)
+        wetR.fill(0, 0, n)
+        this.binaural.process(this.bus, wetL, wetR, n)
+        for (let i = 0; i < n; i++) {
+          const m = this.dryMix.next()
+          const wet = 1 - m
+          left[i] = wetL[i] * wet + mono[i] * m
+          right[i] = wetR[i] * wet + mono[i] * m
+        }
       }
     }
 

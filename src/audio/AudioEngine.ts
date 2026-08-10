@@ -1,6 +1,6 @@
 import { HrirSet } from '../engine/hrir/HrirSet'
 import { METER_SLOT_COUNT, MeterSlot } from '../engine/meters'
-import { PARAMS, ParamId } from '../engine/params'
+import { HRIR_SETS, PARAMS, ParamId } from '../engine/params'
 import { PROCESSOR_NAME, type CommandMessage, type StatusMessage } from '../worklet/protocol'
 import {
   AudioPermissionError,
@@ -31,11 +31,6 @@ export type HrtfStatus =
   | { state: 'active'; label: string; positions: number; taps: number; resampled: boolean }
   | { state: 'error'; label: string; message: string }
 
-/** Order matches the `HrirSet` enum param's options. */
-const HRIR_SOURCES = [
-  { label: 'KU100 · Köln L2702', file: 'ku100-koeln.bin' },
-  { label: 'FABIAN · HATO 0°', file: 'fabian-hato0.bin' },
-]
 
 export interface EngineStatus {
   state: EngineState
@@ -154,7 +149,7 @@ export class AudioEngine {
    * newer call wins over a slower older one.
    */
   private async loadHrirSet(index: number): Promise<void> {
-    const source = HRIR_SOURCES[index] ?? HRIR_SOURCES[0]
+    const source = HRIR_SETS[index] ?? HRIR_SETS[0]
     const token = ++this.hrirLoadToken
     this.patchStatus({ hrtf: { state: 'loading', label: source.label } })
 
@@ -170,7 +165,10 @@ export class AudioEngine {
       this.node.port.postMessage({ type: 'hrir', label: source.label, set: parts }, transfer)
       // The worklet's hrirStatus reply flips the status to active.
     } catch (error) {
-      if (token !== this.hrirLoadToken) return
+      // Same guards as the success path: a stale failure must not overwrite a
+      // newer load, and a failure landing after stop() must not resurrect an
+      // error banner onto an idle engine.
+      if (token !== this.hrirLoadToken || !this.node) return
       this.patchStatus({
         hrtf: {
           state: 'error',

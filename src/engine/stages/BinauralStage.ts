@@ -43,12 +43,15 @@ export class BinauralStage implements Stage {
   private set: HrirSet | null = null
   private lanes: LaneState[] = []
   private historyLen = 0
+  private laneCount = 8
+
+  /** How many bus lanes to size state for; call before a set loads. */
+  setLaneCount(count: number): void {
+    this.laneCount = Math.max(1, count)
+  }
 
   prepare(cfg: EngineConfig): void {
     this.maxBlockSize = cfg.maxBlockSize
-    // Lane state is (re)built lazily when a set arrives, sized to its taps.
-    this.lanes = []
-    this.historyLen = 0
     this.applySet(this.set)
     this.reset()
   }
@@ -64,7 +67,11 @@ export class BinauralStage implements Stage {
     }
   }
 
-  /** Swap the HRIR set (or clear it with null). Realtime-safe: no audio work. */
+  /**
+   * Swap the HRIR set (or clear it with null). Runs on the audio thread but
+   * between render quanta (port message handling), which is where the lane
+   * state is rebuilt — `process()` itself never allocates.
+   */
   setHrir(set: HrirSet | null): void {
     this.set = set
     this.applySet(set)
@@ -78,15 +85,11 @@ export class BinauralStage implements Stage {
     this.lanes = []
     if (set === null) return
     this.historyLen = set.taps + this.maxBlockSize
-  }
-
-  private laneState(index: number): LaneState {
-    while (this.lanes.length <= index) {
+    for (let i = 0; i < this.laneCount; i++) {
       const lane = new LaneState()
       lane.history = new Float32Array(this.historyLen)
       this.lanes.push(lane)
     }
-    return this.lanes[index]
   }
 
   /**
@@ -114,7 +117,10 @@ export class BinauralStage implements Stage {
     const taps = set.taps
     for (let laneIx = 0; laneIx < bus.laneCount; laneIx++) {
       const input = bus.lanes[laneIx]
-      const state = this.laneState(laneIx)
+      // Sized in applySet(); a bus wider than laneCount clips to what exists
+      // rather than allocating on the render path.
+      if (laneIx >= this.lanes.length) break
+      const state = this.lanes[laneIx]
 
       // ── silence skip ──────────────────────────────────────────────────────
       let silent = true
@@ -125,13 +131,17 @@ export class BinauralStage implements Stage {
         }
       }
       if (silent) {
+        // The tail is only safe to skip once it had fully rung out BEFORE
+        // this block — judged on the run of silence accumulated so far, not
+        // including this block, or the last taps-worth of ring-out is
+        // truncated at the block edge. At the moment skipping starts the
+        // history is zeroed, exactly once: skipping without clearing would
+        // leave pre-silence audio in the tail, and the next grain on this
+        // lane would drag a ghost of it back out.
+        const before = state.silentRun
         state.silentRun += n
-        // The tail is only safe to skip once it has fully rung out — and at
-        // that moment the history is zeroed, exactly once. Skipping without
-        // clearing would leave pre-silence audio in the tail, and the next
-        // grain on this lane would drag a ghost of it back out.
-        if (state.silentRun >= taps) {
-          if (state.silentRun - n < taps) state.history.fill(0)
+        if (before >= taps) {
+          if (before - n < taps) state.history.fill(0)
           continue
         }
       } else {

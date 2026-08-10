@@ -4,26 +4,33 @@ A progressive web app that captures live sound from the earbuds, re-composes it
 with granular synthesis and re-spatialises it with HRTF convolution — so that
 walking through a city means hearing a re-imagined version of it.
 
-This commit is **the framework, not the piece**. Audio is captured, metered,
-levelled, limited and played back; the granular and HRTF stages exist in the
-signal chain and pass audio through unchanged. What it proves is that the
-plumbing works end to end on the target device, which is the thing worth
-knowing before any DSP gets written.
-
 ## What runs today
 
 ```
 capture ─▶ input trim ─▶ granular ─▶ directional bus ─▶ binaural ─▶ output gain ─▶ limiter ─▶ ears
-   mono       smoothed    (bypass)      1 lane           (bypass)      smoothed     −1 dBFS    stereo
+   mono       smoothed   grain cloud     8 lanes       HRIR conv.     smoothed     −1 dBFS    stereo
 ```
 
 - Mono capture with echo cancellation, noise suppression and auto gain all
   switched off.
-- Input trim and output gain, both sample-smoothed, plus a click-free mute.
-- A safety limiter at −1 dBFS that cannot be switched off.
-- Input and per-channel output meters with peak-hold, and a status panel that
+- **Granular delay** — the spatdsp `msf::Granular` design: a rolling ring
+  buffer (the delay line and the grain source at once), sample-accurate onset
+  scheduling (metronomic or Poisson), four grain windows, per-grain scatter of
+  length, pitch, level and read delay, reversed grains, and round-robin
+  dealing onto eight directional lanes. Every grain draws its direction as
+  target azimuth/elevation ± spread.
+- **Binaural rendering** — each lane convolves with the HRIR pair measured
+  nearest its direction and crossfades on change. Two measured sets ship,
+  converted from the SOFA sources in `resources/hrtfs/`: KU100 (Köln, 2 702
+  positions, default) and FABIAN (11 950 positions, selectable).
+- The Granular toggle A/Bs the entire wet path against the dry microphone
+  through a short fade; bypassed, the chain is provably dry.
+- Input trim and output gain, both sample-smoothed, plus a click-free mute,
+  and a safety limiter at −1 dBFS that cannot be switched off.
+- Meters with peak-hold, a grains-sounding counter, and a status panel that
   reports the numbers you need to trust the run: sample rates, latency, render
-  rate against realtime, render-clock gaps, clipped samples, limiter activity.
+  rate against realtime, render-clock gaps, clipped samples, limiter activity,
+  which HRTF set is actually rendering.
 - Installable and fully offline-capable.
 
 ## Getting it onto the phone
@@ -166,7 +173,8 @@ audio context. The app detects this, says so, and resumes when it can; the
 
 ## Next
 
-`docs/ARCHITECTURE.md` covers the engine ABI, the WebAssembly migration and the
-open decisions on the HRTF set. The short version of what comes next: a capture
-ring buffer and grain scheduler in `GranularStage`, then HRIR loading, a
-nearest-position index and partitioned convolution in `BinauralStage`.
+`docs/ARCHITECTURE.md` covers the engine ABI, the WebAssembly migration and
+the design of both DSP stages. What remains on the horizon: freeze/loop and
+the structured jitter laws from msf's granulator, partitioned FFT convolution
+if a device's render-rate row ever dips, room responses (BRIR) on top of the
+direct HRIR path, and the wasm build of `src/engine/` itself.

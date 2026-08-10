@@ -63,6 +63,22 @@ for (const set of SETS) {
   if (ears !== 2) throw new Error(`${set.source}: expected 2 receivers, found ${ears}`)
   const sampleRate = Number(file.get('Data.SamplingRate').value[0])
 
+  // The app assumes receiver 0 is the LEFT ear and SourcePosition is
+  // spherical degrees. Both hold for the shipped sets, but the convention
+  // only *recommends* them — a set violating either would convert without
+  // complaint into mirrored or garbage spatialization, so refuse instead.
+  const posType = pos.attrs['Type']?.value
+  if (posType !== 'spherical') {
+    throw new Error(`${set.source}: SourcePosition is '${posType}', expected spherical`)
+  }
+  // ReceiverPosition is [2 receivers × (x,y,z) × 1]; +y is the listener's left.
+  const receiverY = Number(file.get('ReceiverPosition').value[1])
+  if (!(receiverY > 0)) {
+    throw new Error(
+      `${set.source}: receiver 0 sits at y=${receiverY}, expected the left ear (+y) first`,
+    )
+  }
+
   // Everything at once: Köln is 2.7k×2×128, FABIAN 12k×2×256 — both fit fine.
   const irData = ir.value // Float64Array, [m][ear][tap] flattened
   const posData = pos.value // Float64Array, [m][3] flattened (az, el, dist)

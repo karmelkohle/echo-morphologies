@@ -86,6 +86,21 @@ const db = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`
 const ms = (value: number) => (value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`)
 const deg = (value: number) => `${value > 0 ? '+' : ''}${Math.round(value)}°`
 const pct = (value: number) => `${Math.round(value * 100)}%`
+const enumFormat = (options: readonly string[]) => (value: number) => options[Math.round(value)] ?? '?'
+
+/**
+ * The HRIR sets the app ships — the single truth the enum options, the value
+ * formatting and the host's fetch table all derive from, so adding or
+ * reordering a set is one edit.
+ */
+export const HRIR_SETS = [
+  { label: 'KU100 · Köln L2702', file: 'ku100-koeln.bin' },
+  { label: 'FABIAN · HATO 0°', file: 'fabian-hato0.bin' },
+] as const
+
+const HRIR_LABELS = HRIR_SETS.map((s) => s.label)
+const ENV_SHAPES = ['Hann', 'Tukey', 'Gaussian', 'Triangle']
+const SCHEDULERS = ['Metronomic', 'Poisson']
 
 export const PARAMS: readonly ParamSpec[] = [
   // ── levels ────────────────────────────────────────────────────────────────
@@ -297,8 +312,8 @@ export const PARAMS: readonly ParamSpec[] = [
     step: 1,
     unit: '',
     smoothingMs: 0,
-    options: ['Hann', 'Tukey', 'Gaussian', 'Triangle'],
-    format: (v) => ['Hann', 'Tukey', 'Gaussian', 'Triangle'][Math.round(v)] ?? '?',
+    options: ENV_SHAPES,
+    format: enumFormat(ENV_SHAPES),
   },
   {
     id: ParamId.Scheduler,
@@ -312,8 +327,8 @@ export const PARAMS: readonly ParamSpec[] = [
     step: 1,
     unit: '',
     smoothingMs: 0,
-    options: ['Metronomic', 'Poisson'],
-    format: (v) => ['Metronomic', 'Poisson'][Math.round(v)] ?? '?',
+    options: SCHEDULERS,
+    format: enumFormat(SCHEDULERS),
     hint: 'Poisson kills the machine-gun effect at low densities.',
   },
 
@@ -388,8 +403,8 @@ export const PARAMS: readonly ParamSpec[] = [
     step: 1,
     unit: '',
     smoothingMs: 0,
-    options: ['KU100 · Köln L2702', 'FABIAN · HATO 0°'],
-    format: (v) => ['KU100 · Köln L2702', 'FABIAN · HATO 0°'][Math.round(v)] ?? '?',
+    options: HRIR_LABELS,
+    format: enumFormat(HRIR_LABELS),
     hint: 'Which measured head renders the field. FABIAN is a 12 MB download.',
   },
 ]

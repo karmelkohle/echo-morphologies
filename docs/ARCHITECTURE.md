@@ -92,35 +92,39 @@ so a bypassed stage sounds like a bypassed stage instead of like a bug. Both
 bypasses are verified — comment either call out and the input meter keeps
 reading while the output goes to true silence.
 
-## Filling in the stages
+## The stages as built
 
-**Granular.** A capture ring buffer of a few seconds — it is the delay line and
-the grain source at once. A scheduler emitting onsets at a density, each grain
-taking read position, duration, playback rate and window from the parameter
-table plus a seeded RNG, so a walk can be reproduced. Then a position composer:
-with one microphone there is no direction of arrival to recover, so direction is
-composed, and that composer is the artistic core of the piece rather than a
-technical detail.
+**Granular** (`stages/GranularStage.ts`) is a port of `msf::Granular` +
+`GranularExpander`, close enough that figures transfer: rolling capture ring
+with the seam-guarded interpolated read, sample-accurate onset countdown
+(Sync and Poisson schedulers), the four grain envelopes, per-grain uniform
+deviation draws from the bit-compatible LCG (`dsp/Rng.ts`), reversed grains
+as negative playback rates, round-robin lane dealing. One deliberate
+extension: an explicit read-delay parameter (base ± scatter) positions the
+tap behind realtime. Not ported yet, by choice: freeze/loop, pitch
+quantization, the structured jitter laws — they layer on without moving
+anything.
 
-**Binaural.** Three problems, in the order they bite:
+**Binaural** (`stages/BinauralStage.ts` + `hrir/HrirSet.ts`) resolved the
+brief's three worries smaller than feared, because the real sets are smaller
+than the brief guessed:
 
-1. *Storage.* 256 taps × 2 ears × ~20 000 positions × 4 bytes ≈ 41 MB resident.
-   Loadable once at start-up, but iOS is not generous with a tab's memory
-   budget; int16 with a per-position scale halves it and is worth measuring
-   before committing to float32.
-2. *Lookup.* The brief calls nearest-position lookup the main subtlety and it
-   is. A linear scan of 20 000 positions per grain is not viable. Bucketed
-   equirectangular bins with a neighbour search, or a spherical KD-tree. Decide
-   this before the set is loaded — the index wants to match the storage layout,
-   and retrofitting one to the other means rewriting both.
-3. *Convolution.* Partitioned uniform-block, per lane. At 256 taps against
-   128-frame quanta that is two partitions per ear, frequency-domain, with the
-   forward transform of the input block computed once and shared across lanes.
-   Crossfade when a lane's direction changes, or movement clicks.
+1. *Storage.* KU100 Köln is 2 702 positions × 128 taps; FABIAN 11 950 × 256.
+   Converted offline (scripts/sofa-to-hrir.mjs, h5wasm — SOFA never reaches
+   the browser) to int16 binaries of 1.3 MB and 11.8 MB, decoded to float32
+   at load (~2.8 / 24 MB resident).
+2. *Lookup.* At these sizes a flat unit-vector scan wins over any tree, and
+   it runs at direction-change rate (grain spawns), not sample rate.
+3. *Convolution.* Time-domain FIR per lane, ~100 M MAC/s worst case at
+   Köln×8 lanes — with a silent-lane skip that removes most of it at
+   ordinary densities, since dead lanes ring out their tail, zero once, and
+   cost nothing. Direction changes crossfade for one block. The render-rate
+   status row referees; partitioned FFT is the upgrade path if a phone
+   disagrees.
 
-`msf`'s `binaural_speaker.hpp` holds the per-position HRIR convolution matrix
-this maps onto, and `image_source.hpp` covers the room-response half of the
-brief once the direct path works.
+Sets resample linearly at load when the context rate differs from the
+measurement rate (the status row says so). `msf`'s `image_source.hpp` covers
+the room-response half of the brief when it comes.
 
 ## Adding a parameter
 

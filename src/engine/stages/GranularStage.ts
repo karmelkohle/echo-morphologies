@@ -96,7 +96,6 @@ const MAX_BUFFER_SEC = 20
 
 export class GranularStage implements Stage {
   // ── parameters (set from EngineCore, read at spawn time) ─────────────────
-  enabled = true
   bufferSec = 8
   delayMs = 250
   delayDevMs = 120
@@ -124,7 +123,6 @@ export class GranularStage implements Stage {
   private writeIx = 0
   private readonly grains: Grain[] = []
   private spawnCountdown = 0
-  private spawnCount = 0
   private laneSeq = 0
   private readonly rng = new Rng()
   private readonly schedRng = new Rng()
@@ -145,7 +143,6 @@ export class GranularStage implements Stage {
     this.writeIx = 0
     for (const g of this.grains) g.active = false
     this.spawnCountdown = 0
-    this.spawnCount = 0
     this.laneSeq = 0
     this.rng.seed(this.seedBase)
     this.schedRng.seed(this.seedBase ^ 0x5c4ed)
@@ -158,6 +155,24 @@ export class GranularStage implements Stage {
   }
 
   /**
+   * Ring-write only: keeps the capture rolling while the stage is bypassed,
+   * so re-enabling grains reads the *present* past, not a frozen one from the
+   * moment of bypass.
+   */
+  feed(input: Float32Array, frames: number): void {
+    this.writeInput(input, frames)
+  }
+
+  /**
+   * Ends every in-flight grain. Called when a bypass fade completes — their
+   * read taps would be ancient by re-enable time, and a paused grain would
+   * resurrect as a burst from the distant past.
+   */
+  retireAll(): void {
+    for (const g of this.grains) g.active = false
+  }
+
+  /**
    * @param input Mono capture for this block.
    * @param bus   Destination field, zeroed by the caller. Lanes are ADDED to —
    *             grains accumulate, and the additive contract matches
@@ -165,25 +180,11 @@ export class GranularStage implements Stage {
    *             Directions are assigned at spawn, not accumulated.
    */
   process(input: Float32Array, bus: DirectionalBus, frames: number): void {
-    if (!this.enabled) {
-      // Bypass: the capture arrives dry on lane 0, straight ahead — the
-      // smoke test's reference path, and an honest A/B for the ear. Grains
-      // in flight are retired, not paused: their read taps would be ancient
-      // by the time the stage re-enables, and a paused grain would resurrect
-      // as a burst from the distant past.
-      for (const g of this.grains) g.active = false
-      const lane = bus.lanes[0]
-      const n = Math.min(frames, lane.length)
-      for (let i = 0; i < n; i++) lane[i] += input[i]
-      const d = bus.directions[0]
-      d.azimuthDeg = 0
-      d.elevationDeg = 0
-      d.distanceM = 1
-      return
-    }
-
     this.writeInput(input, frames)
     this.schedule(frames, bus)
+
+    // Constant for the block; hoisted out of the per-sample read.
+    const used = this.usedCap()
 
     for (const g of this.grains) {
       if (!g.active) continue
@@ -195,7 +196,7 @@ export class GranularStage implements Stage {
           g.active = false
           break
         }
-        out[t] += grainEnvelope(g.env, g.elapsed, g.length) * this.read(g.samplesAgo) * g.gain
+        out[t] += grainEnvelope(g.env, g.elapsed, g.length) * this.read(g.samplesAgo, used) * g.gain
         g.samplesAgo -= g.pitch
         g.elapsed++
       }
@@ -212,8 +213,7 @@ export class GranularStage implements Stage {
   }
 
   /** Interpolated tap `samplesAgo` behind the write head; msf's read(). */
-  private read(samplesAgo: number): number {
-    const used = this.usedCap()
+  private read(samplesAgo: number, used: number): number {
     // used - 1: linear interpolation touches one sample older than the tap,
     // so a tap in (used-1, used) would blend across the ring seam.
     if (samplesAgo < 0 || samplesAgo >= used - 1) return 0
@@ -283,9 +283,11 @@ export class GranularStage implements Stage {
     // the read-delay parameter then pushes the tap further into the past.
     const delaySamples = Math.max(0, ((this.delayMs + this.centered(this.delayDevMs)) / 1000) * this.sampleRate)
     let ago = len * Math.max(pf, 1) + delaySamples
-    // A reversed grain walks a further len·(1+pf) into the past; keep its
-    // whole path inside the window so it does not fade into the seam guard.
-    const travel = reversed ? len * (1 + pf) : 0
+    // Keep the grain's whole path inside the window, or its back half fades
+    // into the seam guard. A reversed grain walks len·(1+pf) deeper (aging
+    // plus backwards playback); a slowed forward grain still drifts back by
+    // len·(1−pf), because aging outruns its read rate.
+    const travel = reversed ? len * (1 + pf) : len * Math.max(0, 1 - pf)
     ago = clamp(ago, 1, Math.max(1, used - 2 - travel))
 
     slot.active = true
@@ -307,6 +309,5 @@ export class GranularStage implements Stage {
     direction.elevationDeg = elevation
     direction.distanceM = 1
 
-    this.spawnCount++
   }
 }
