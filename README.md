@@ -158,3 +158,5 @@ audio context. The app detects this, says so, and resumes when it can; the
 open decisions on the HRTF set. The short version of what comes next: a capture
 ring buffer and grain scheduler in `GranularStage`, then HRIR loading, a
 nearest-position index and partitioned convolution in `BinauralStage`.
+
+
