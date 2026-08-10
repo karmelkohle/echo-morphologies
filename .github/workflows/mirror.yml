@@ -124,11 +124,30 @@ jobs:
           MIRROR_REPO: ${{ vars.MIRROR_REPO }}
           MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
         run: |
+          # Every LFS object in history has to be local before it can be
+          # forwarded. The checkout only fetched the current ref's objects;
+          # this pulls the rest, and it must happen first because it needs the
+          # source credentials that are about to be removed.
+          git lfs fetch --all origin
+
+          # actions/checkout wires this repository's own token into every
+          # github.com request as an extra header. Requests to the mirror then
+          # carry two identities — the URL's token and this header's — and
+          # GitHub's LFS API refuses the pair ("must have push access to verify
+          # locks" on a token that plainly has it). Origin is not needed from
+          # here on, so drop the header.
+          git config --unset-all "http.https://github.com/.extraheader" || true
+
           # A named remote rather than a bare URL because git-lfs needs one it
           # can resolve credentials against. The token only ever exists in the
           # config of this ephemeral runner, and Actions masks it in the log.
           git remote add mirror \
             "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
+
+          # LFS file locking is not used in this project, and the lock-verify
+          # round-trip is the one LFS call token auth most often stumbles on.
+          # Off means "push without asking about locks", nothing more.
+          git config "lfs.https://github.com/${MIRROR_REPO}.git/info/lfs.locksverify" false
 
           # Objects before refs: once the commits land, their pointers must
           # already resolve, or a checkout on the target — including its own
