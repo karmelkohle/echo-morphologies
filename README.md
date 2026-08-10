@@ -32,8 +32,13 @@ capture ─▶ input trim ─▶ granular ─▶ directional bus ─▶ binaural
 https URL. Two ways:
 
 **GitHub Pages** — push, and `.github/workflows/pages.yml` builds and publishes.
-Enable it once under *Settings → Pages → Source: GitHub Actions*. Then open the
-published URL in Safari and use *Share → Add to Home Screen*.
+The workflow turns Pages on for the repository itself the first time it runs.
+Then open the published URL in Safari and use *Share → Add to Home Screen*.
+
+That needs a plan that allows Pages on a *private* repository, which this one
+is. If the deploy fails on the `configure-pages` step, that is what happened —
+either make the repository public, or use the local route below and any static
+host with https for sharing.
 
 **Local, over the network** — `npm run dev:https` serves the dev server on the
 LAN with a self-signed certificate. Safari will warn about the certificate; you
@@ -50,8 +55,16 @@ npm run dev            # app on http://localhost:5173
 npm run dev:worklet    # in a second terminal, rebuilds the audio engine on change
 npm run build          # typecheck, worklet bundle, app bundle → dist/
 npm run typecheck
+npm run smoke          # build, then drive the real app in a headless browser
 npm run icons          # regenerate public/icons/ from scripts/gen-icons.mjs
 ```
+
+`npm run smoke` is the regression net worth keeping green: it starts the app
+against a synthetic microphone and asserts that the graph runs at realtime with
+no clock gaps, that the output tracks the input at exactly the output gain's
+offset on both channels, and that mute reaches true silence. Those are claims
+about the DSP, not just about the page loading. It needs a browser once —
+`npx playwright install chromium`, or point `CHROMIUM_PATH` at one you have.
 
 The AudioWorklet is a separate bundle (see `vite.worklet.config.ts` for why), so
 `npm run dev` builds it once at start-up. Editing anything under `src/engine/`

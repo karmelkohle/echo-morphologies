@@ -143,12 +143,18 @@ future render quantum widens the block rather than truncating it.
 
 ## Verifying a change
 
-There are no unit tests yet. What exists is an end-to-end check that the graph
-runs, which is the failure mode that actually bites: run `npm run build`, serve
-`dist/`, and drive it in a browser with a fake capture device
-(`--use-fake-device-for-media-stream`). The status panel is built for this — a
-run is healthy when *render rate* sits at ~100% of realtime, *clock gaps* stays
-at 0, and the output meters track the input with exactly the output gain's
-offset. That last one is a real assertion about the DSP, not just about the
-plumbing: at the default −12 dB the output must read 12 dB under the input, and
-mute must take the output to silence while the input keeps reading.
+There are no unit tests yet. What exists is `npm run smoke` — `tests/smoke.mjs`
+builds, serves `dist/`, and drives the real app in headless Chromium against a
+synthetic capture device.
+
+The status panel is what it reads, and the assertions are about the DSP rather
+than about the page loading: *render rate* at ~100% of realtime, *clock gaps* at
+0, the output meters tracking the input at exactly the output gain's offset on
+both channels, and mute reaching true silence while the input keeps reading. A
+build where the graph runs but the engine is wrong passes a "did it load" check
+and fails this one, which is the failure mode that will matter once there is
+real DSP in `src/engine/`.
+
+When a stage gains actual signal processing, the assertion to add alongside it
+is the one that would catch it being silently bypassed — a granulator that
+outputs its dry input still passes every check above.

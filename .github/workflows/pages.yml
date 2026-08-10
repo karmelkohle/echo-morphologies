@@ -26,14 +26,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - name: Install
+        run: npm ci
+        env:
+          # The smoke test's browser is a local tool; a deploy has no use for
+          # 150 MB of Chromium.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
       - name: Build
         run: npm run build
@@ -43,6 +48,12 @@ jobs:
           PAGES_BASE: /${{ github.event.repository.name }}/
 
       - uses: actions/configure-pages@v5
+        with:
+          # Turns Pages on for the repository the first time this runs, instead
+          # of failing until someone visits the settings page. Needs a plan that
+          # allows Pages on a private repository — otherwise make the repository
+          # public, or see the README for the local-https route.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
