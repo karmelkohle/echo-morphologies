@@ -65,6 +65,8 @@ export class EngineCore implements AudioEngineCore {
   private bus = new DirectionalBus(1, 0)
   /** Fallback right channel for hosts that only give us one output channel. */
   private spareRight = new Float32Array(0)
+  /** Tracks bypass transitions so the renderer's tails reset cleanly. */
+  private binauralWasActive = true
 
   prepare(cfg: EngineConfig): void {
     this.cfg = { ...cfg }
@@ -90,6 +92,15 @@ export class EngineCore implements AudioEngineCore {
     this.limiter.prepare(sampleRate)
 
     this.reset()
+  }
+
+  /**
+   * Hands the binaural stage its HRIR set. Concrete on EngineCore rather than
+   * part of the ABI interface — the wasm build's equivalent is an
+   * `engine_load_hrir(ptr, len)` export, same idea, different plumbing.
+   */
+  setHrir(set: Parameters<BinauralStage['setHrir']>[0]): void {
+    this.binaural.setHrir(set)
   }
 
   reset(): void {
@@ -223,19 +234,32 @@ export class EngineCore implements AudioEngineCore {
     this.granular.process(mono, this.bus, n)
 
     // ═══ 3. BINAURAL RENDERING (HRTF CONVOLUTION) ═══════════════════════════
-    // NOT IMPLEMENTED — the stage sums the field into both ears and ignores
-    // the directions entirely, so the output is dual mono.
+    // Each lane is convolved with the HRIR pair measured nearest to its
+    // direction and the ears sum; direction changes crossfade for one block.
+    // Until a set has loaded, the stage falls back to a directionless sum.
     //
     //   in   `this.bus`, the directional field
     //   out  `left` / `right` over [0..n), already zeroed and ADDED to
     //
-    // This is where each lane gets convolved with the HRIR pair for its
-    // direction. Same deal: edit stages/BinauralStage.ts, or write the ears
-    // directly here. Commenting the call out yields silence.
+    // When granular is bypassed the renderer is bypassed with it — the
+    // reference path stays provably dry (exact gain offset, ears identical),
+    // which is what makes the A/B and the smoke test mean something.
 
     left.fill(0, 0, n)
     right.fill(0, 0, n)
-    this.binaural.process(this.bus, left, right, n)
+    if (this.granular.enabled) {
+      if (!this.binauralWasActive) this.binaural.reset()
+      this.binauralWasActive = true
+      this.binaural.process(this.bus, left, right, n)
+    } else {
+      this.binauralWasActive = false
+      const lane = this.bus.lanes[0]
+      for (let i = 0; i < n; i++) {
+        const x = lane[i]
+        left[i] += x
+        right[i] += x
+      }
+    }
 
     // ═══ 4. OUTPUT ══════════════════════════════════════════════════════════
     // Level, then protection. Nothing here shapes the sound — the limiter is a

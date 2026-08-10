@@ -37,11 +37,14 @@ export const ParamId = {
   AzimuthDevDeg: 16,
   ElevationDeg: 17,
   ElevationDevDeg: 18,
+
+  /** Handled by the host (it owns fetching); the engine ignores it. */
+  HrirSet: 19,
 } as const
 
 export type ParamId = (typeof ParamId)[keyof typeof ParamId]
 
-export const PARAM_COUNT = 19
+export const PARAM_COUNT = 20
 
 export type ParamKind = 'continuous' | 'toggle' | 'enum'
 
@@ -147,7 +150,7 @@ export const PARAMS: readonly ParamSpec[] = [
     smoothingMs: 0,
     format: (v) => (v >= 0.5 ? 'on' : 'bypassed'),
     toggleTone: 'positive',
-    hint: 'Off routes the microphone straight through — the A/B reference.',
+    hint: 'Off routes the microphone dry to both ears, HRTF included — the A/B reference.',
   },
   {
     id: ParamId.BufferSec,
@@ -372,6 +375,22 @@ export const PARAMS: readonly ParamSpec[] = [
     unit: '°',
     smoothingMs: 0,
     format: (v) => `±${Math.round(v)}°`,
+  },
+  {
+    id: ParamId.HrirSet,
+    key: 'hrirSet',
+    label: 'HRTF set',
+    kind: 'enum',
+    group: 'space',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 1,
+    unit: '',
+    smoothingMs: 0,
+    options: ['KU100 · Köln L2702', 'FABIAN · HATO 0°'],
+    format: (v) => ['KU100 · Köln L2702', 'FABIAN · HATO 0°'][Math.round(v)] ?? '?',
+    hint: 'Which measured head renders the field. FABIAN is a 12 MB download.',
   },
 ]
 

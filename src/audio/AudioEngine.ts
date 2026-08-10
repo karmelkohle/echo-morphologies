@@ -1,5 +1,6 @@
+import { HrirSet } from '../engine/hrir/HrirSet'
 import { METER_SLOT_COUNT, MeterSlot } from '../engine/meters'
-import { PARAMS, type ParamId } from '../engine/params'
+import { PARAMS, ParamId } from '../engine/params'
 import { PROCESSOR_NAME, type CommandMessage, type StatusMessage } from '../worklet/protocol'
 import {
   AudioPermissionError,
@@ -23,6 +24,19 @@ import {
 
 export type EngineState = 'idle' | 'starting' | 'running' | 'interrupted' | 'error'
 
+/** What the binaural renderer is working with right now. */
+export type HrtfStatus =
+  | { state: 'none' }
+  | { state: 'loading'; label: string }
+  | { state: 'active'; label: string; positions: number; taps: number; resampled: boolean }
+  | { state: 'error'; label: string; message: string }
+
+/** Order matches the `HrirSet` enum param's options. */
+const HRIR_SOURCES = [
+  { label: 'KU100 · Köln L2702', file: 'ku100-koeln.bin' },
+  { label: 'FABIAN · HATO 0°', file: 'fabian-hato0.bin' },
+]
+
 export interface EngineStatus {
   state: EngineState
   sampleRate: number | null
@@ -38,6 +52,7 @@ export interface EngineStatus {
   message: string | null
   /** One actionable sentence, when there is one. */
   remedy: string | null
+  hrtf: HrtfStatus
 }
 
 export interface MeterSnapshot {
@@ -101,7 +116,11 @@ export class AudioEngine {
     screenLockHeld: false,
     message: null,
     remedy: null,
+    hrtf: { state: 'none' },
   }
+
+  /** Guards against a slow fetch overwriting a newer set choice. */
+  private hrirLoadToken = 0
 
   constructor() {
     document.addEventListener('visibilitychange', () => {
@@ -125,6 +144,41 @@ export class AudioEngine {
   setParam(id: ParamId, value: number): void {
     this.values.set(id, value)
     this.send({ type: 'param', id, value })
+    // The set choice is host business: the engine cannot fetch.
+    if (id === ParamId.HrirSet && this.node) void this.loadHrirSet(Math.round(value))
+  }
+
+  /**
+   * Fetches an HRIR set, parses and resamples it on this thread, and hands
+   * the arrays to the audio thread by transfer. Safe to call repeatedly; a
+   * newer call wins over a slower older one.
+   */
+  private async loadHrirSet(index: number): Promise<void> {
+    const source = HRIR_SOURCES[index] ?? HRIR_SOURCES[0]
+    const token = ++this.hrirLoadToken
+    this.patchStatus({ hrtf: { state: 'loading', label: source.label } })
+
+    try {
+      const response = await fetch(`${import.meta.env.BASE_URL}hrtf/${source.file}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const bytes = await response.arrayBuffer()
+      if (token !== this.hrirLoadToken || !this.node) return
+
+      const contextRate = this.status.sampleRate ?? this.context?.sampleRate ?? 48000
+      const set = HrirSet.parse(bytes).resampleTo(contextRate)
+      const { parts, transfer } = set.toParts()
+      this.node.port.postMessage({ type: 'hrir', label: source.label, set: parts }, transfer)
+      // The worklet's hrirStatus reply flips the status to active.
+    } catch (error) {
+      if (token !== this.hrirLoadToken) return
+      this.patchStatus({
+        hrtf: {
+          state: 'error',
+          label: source.label,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      })
+    }
   }
 
   /**
@@ -188,6 +242,7 @@ export class AudioEngine {
       this.node = node
 
       for (const [id, value] of this.values) this.send({ type: 'param', id, value })
+      void this.loadHrirSet(Math.round(this.values.get(ParamId.HrirSet) ?? 0))
 
       this.anchorBlocks = 0
       this.anchorTime = 0
@@ -254,6 +309,7 @@ export class AudioEngine {
       screenLockHeld: false,
       message: null,
       remedy: null,
+      hrtf: { state: 'none' },
     })
   }
 
@@ -264,6 +320,21 @@ export class AudioEngine {
   private handleStatus(message: StatusMessage): void {
     if (message.type === 'ready') {
       this.patchStatus({ blockSize: message.blockSize })
+      return
+    }
+
+    if (message.type === 'hrirStatus') {
+      this.patchStatus({
+        hrtf: message.ok
+          ? {
+              state: 'active',
+              label: message.label,
+              positions: message.positions ?? 0,
+              taps: message.taps ?? 0,
+              resampled: message.resampled ?? false,
+            }
+          : { state: 'error', label: message.label, message: message.error ?? 'unknown failure' },
+      })
       return
     }
 

@@ -75,7 +75,7 @@
           </li>
           <li>
             <span class="stage-name">binaural</span
-            ><span class="stage-note stage-todo">pass-through &mdash; not implemented</span>
+            ><span class="stage-note">nearest-HRIR convolution per lane, crossfaded</span>
           </li>
           <li><span class="stage-name">output gain</span><span class="stage-note">smoothed, mute-ramped</span></li>
           <li><span class="stage-name">limiter</span><span class="stage-note">safety ceiling, −1 dBFS</span></li>
@@ -89,9 +89,9 @@
 
       <footer class="colophon">
         <p>
-          The granular delay is live; HRTF rendering is next &mdash; the chain
-          above shows what each stage really does. See
-          <code>docs/ARCHITECTURE.md</code>.
+          Granular re-composition and HRTF rendering are live. Bypassing
+          granular hears the dry microphone &mdash; the A/B for everything.
+          See <code>docs/ARCHITECTURE.md</code>.
         </p>
       </footer>
     </div>

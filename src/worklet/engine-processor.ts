@@ -1,4 +1,5 @@
 import { EngineCore } from '../engine/EngineCore'
+import { HrirSet } from '../engine/hrir/HrirSet'
 import { METER_SLOT_COUNT } from '../engine/meters'
 import { PROCESSOR_NAME, type CommandMessage, type StatusMessage } from './protocol'
 
@@ -57,6 +58,27 @@ class EngineProcessor extends AudioWorkletProcessor {
         break
       case 'meterInterval':
         this.setMeterInterval(message.ms)
+        break
+      case 'hrir':
+        try {
+          const set = HrirSet.fromParts(message.set)
+          this.core.setHrir(set)
+          this.post({
+            type: 'hrirStatus',
+            ok: true,
+            label: message.label,
+            positions: set.positionCount,
+            taps: set.taps,
+            resampled: set.resampled,
+          })
+        } catch (error) {
+          this.post({
+            type: 'hrirStatus',
+            ok: false,
+            label: message.label,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
         break
     }
   }

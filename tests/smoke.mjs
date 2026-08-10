@@ -173,9 +173,11 @@ check(
 
 // ── Phase 2: granular bypassed — the exact reference path ──────────────────
 // Bypass must restore the provable pass-through: output tracks input at
-// exactly the output gain's offset, and both ears agree.
+// exactly the output gain's offset, and both ears agree. The meter readouts
+// are decaying peak holds, so phase 1's louder, lateralized residue has to
+// fall away first (1.2 s hold + ~2 s fall) or this window maxes over it.
 await page.click('#param-granular')
-await page.waitForTimeout(400)
+await page.waitForTimeout(4200)
 const bypass = await sampleWindow('granular bypassed', SAMPLE_MS)
 check(bypass.peaks['out L'] > -40, `bypass out L never moved (max ${bypass.peaks['out L']} dB)`)
 
@@ -208,6 +210,50 @@ check(
   `output did not fall silent while muted (settled at ${muted.meters['out L']})`,
 )
 await page.click('#param-mute')
+
+// ── Phase 3: lateralization — the HRIR path, end to end ────────────────────
+// Every grain aimed hard left (azimuth +90°, zero spread): if the loader, the
+// nearest-position index, the per-lane convolution and the coordinate
+// handedness all work, the LEFT ear must come out louder — signed, not just
+// different. A duller assertion would pass with the ears swapped.
+await page.evaluate(() => {
+  const drive = (key, value) => {
+    const el = document.getElementById(`param-${key}`)
+    el.value = String(value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  drive('azimuthDeg', 90)
+  drive('azimuthDevDeg', 0)
+  drive('elevationDeg', 0)
+  drive('elevationDevDeg', 0)
+})
+await page.click('#param-granular') // re-enable after the bypass phase
+
+// The set loads async at start; normally long done by now, but don't race it.
+for (const deadline = Date.now() + 10000; Date.now() < deadline; ) {
+  const s = await snapshot()
+  const row = s.rows['hrtf set'] ?? ''
+  if (row.includes('pos ×')) break
+  if (row.includes('failed')) break
+  await page.waitForTimeout(120)
+}
+const hrtfRow = (await snapshot()).rows['hrtf set'] ?? ''
+console.log('\nhrtf set:', hrtfRow)
+// Tap count varies with the context rate (the set resamples to match — this
+// headless context runs at 44.1 kHz), so assert the set and position count.
+check(/2,702 pos × \d+ taps/.test(hrtfRow), `hrtf row: "${hrtfRow}"`)
+
+const lateral = await sampleWindow('grains hard left (az +90°)', SAMPLE_MS)
+check(lateral.maxGrains > 0, 'no grains sounded in the lateralization phase')
+check(lateral.peaks['out L'] > -40, `left ear silent at az +90 (${lateral.peaks['out L']} dB)`)
+const ild = lateral.peaks['out L'] - lateral.peaks['out R']
+check(
+  ild >= 1.5,
+  `azimuth +90° should favor the LEFT ear by ≥1.5 dB, measured L−R = ${ild.toFixed(1)} dB`,
+)
+const lateralRate = Number((lateral.last.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
+check(lateralRate >= 95, `render rate with HRIR convolution: ${lateral.last.rows['render rate']}`)
+check(lateral.last.rows['clock gaps'] === '0', `clock gaps ${lateral.last.rows['clock gaps']}`)
 
 await page.click('#transport')
 await page.waitForTimeout(600)

@@ -13,11 +13,13 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "smoke": "npm run build && node tests/smoke.mjs",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "hrtf": "node scripts/sofa-to-hrir.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "h5wasm": "^0.10.3",
     "playwright": "^1.62.1",
     "typescript": "^5.9.0",
     "vite": "^8.2.1"

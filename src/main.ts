@@ -125,6 +125,27 @@ function renderStatus(next: EngineStatus): void {
   )
   status.set('screen wake lock', next.screenLockHeld ? 'held' : 'not available')
   status.set('display mode', displayMode())
+
+  const hrtf = next.hrtf
+  switch (hrtf.state) {
+    case 'none':
+      status.set('hrtf set', '—')
+      break
+    case 'loading':
+      status.set('hrtf set', `loading ${hrtf.label}…`, 'warn')
+      break
+    case 'active':
+      status.set(
+        'hrtf set',
+        `${hrtf.label} · ${hrtf.positions.toLocaleString()} pos × ${hrtf.taps} taps` +
+          (hrtf.resampled ? ' · resampled' : ''),
+        'good',
+      )
+      break
+    case 'error':
+      status.set('hrtf set', `${hrtf.label} failed: ${hrtf.message}`, 'alert')
+      break
+  }
 }
 
 function renderMeters(snapshot: MeterSnapshot | null): void {
