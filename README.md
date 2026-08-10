@@ -57,10 +57,15 @@ repository in another account — useful when the account that can actually
 publish Pages is not the account the work happens in. It does nothing until two
 values exist under *Settings → Secrets and variables → Actions*:
 
-| Kind     | Name           | Value                                                                                    |
-| -------- | -------------- | ---------------------------------------------------------------------------------------- |
-| Variable | `MIRROR_REPO`  | `owner/name` of the target                                                                 |
-| Secret   | `MIRROR_TOKEN` | fine-grained PAT from the target's account, scoped to that one repo, `Contents: Read and write` |
+| Kind     | Name           | Value                                                              |
+| -------- | -------------- | ------------------------------------------------------------------ |
+| Variable | `MIRROR_REPO`  | `owner/name` of the target                                           |
+| Secret   | `MIRROR_TOKEN` | fine-grained PAT issued by the target's account, scoped to that one repository, with **Contents: Read and write** *and* **Workflows: Read and write** |
+
+Both permissions are needed. Contents alone looks sufficient and is not — this
+repository carries files under `.github/workflows/`, and GitHub rejects any
+token-authored push that creates or changes a workflow file unless the token
+also carries Workflows.
 
 Because the token belongs to the target's account, that account is what performs
 the push and what the target's history records — the source account never

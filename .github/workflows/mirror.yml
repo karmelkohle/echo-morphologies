@@ -7,11 +7,17 @@ name: Mirror to a second repository
 # Settings → Secrets and variables → Actions:
 #
 #   Variable  MIRROR_REPO    owner/name of the target,
-#                            e.g. karmelkohle/echo-morphologies
+#                            e.g. someone-else/echo-morphologies
 #   Secret    MIRROR_TOKEN   a fine-grained personal access token issued by the
 #                            account that owns the target, scoped to that one
-#                            repository, with Contents: Read and write.
-#                            Nothing else — it does not need any other scope.
+#                            repository, with two permissions:
+#                              Contents:  Read and write
+#                              Workflows: Read and write
+#
+# Both are needed. Contents alone looks sufficient and is not: this repository
+# carries files under .github/workflows/, and GitHub refuses any token-authored
+# push that creates or changes a workflow file unless the token also carries
+# Workflows. The failure is at push time and names the offending file.
 #
 # The mirror is downstream, not a second place to work. The push is forced, so
 # any commit that exists only over there is overwritten on the next push here.
