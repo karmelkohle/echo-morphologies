@@ -44,13 +44,14 @@ export class BinauralStage implements Stage {
 
   /**
    * @param bus   Directional field for this block.
-   * @param left  Left-ear output, fully overwritten.
-   * @param right Right-ear output, fully overwritten.
+   * @param left  Left-ear output, zeroed by the caller and ADDED to.
+   * @param right Right-ear output, same.
+   *
+   * Additive because the real renderer sums one convolution per lane; writing
+   * the ears rather than accumulating them would mean the last lane wins.
    */
   process(bus: DirectionalBus, left: Float32Array, right: Float32Array, frames: number): void {
     const n = Math.min(frames, this.maxBlockSize)
-    left.fill(0, 0, n)
-    right.fill(0, 0, n)
 
     // Pass-through placeholder: sum the field, ignore its directions.
     for (const lane of bus.lanes) {

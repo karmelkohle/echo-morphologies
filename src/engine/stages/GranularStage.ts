@@ -39,15 +39,16 @@ export class GranularStage implements Stage {
 
   /**
    * @param input Mono capture for this block.
-   * @param bus   Destination field; lanes are overwritten, not accumulated.
+   * @param bus   Destination field, zeroed by the caller. Lanes are ADDED to —
+   *             grains accumulate, and the additive contract matches
+   *             `msf::SourceExpander` so the C++ implementation drops in.
+   *             Directions are assigned, not accumulated.
    */
   process(input: Float32Array, bus: DirectionalBus, frames: number): void {
-    bus.clear(frames)
-
     // Pass-through placeholder: the whole capture arrives dry, straight ahead.
     const lane = bus.lanes[0]
     const n = Math.min(frames, lane.length, this.frames)
-    for (let i = 0; i < n; i++) lane[i] = input[i]
+    for (let i = 0; i < n; i++) lane[i] += input[i]
 
     const direction = bus.directions[0]
     direction.azimuthDeg = FRONT.azimuthDeg

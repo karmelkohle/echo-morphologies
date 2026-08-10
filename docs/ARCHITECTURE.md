@@ -77,6 +77,21 @@ Coordinates match spatdsp exactly, so figures move between the projects without
 conversion: degrees, azimuth 0° straight ahead and positive counter-clockwise
 over [−180, +180], elevation over [−90, +90], distance in metres, reference 1 m.
 
+## Working on one stage at a time
+
+`EngineCore.process()` is laid out as four numbered sections — capture,
+granular, binaural, output — each with the stage's input and output contract
+written above the call. To try something, edit the stage class, or write
+straight into the buffers in the section itself and skip the call.
+
+Stages receive buffers `EngineCore` has already zeroed and add into them. That
+is the contract the real DSP wants anyway (grains accumulate; the renderer sums
+one convolution per lane), and it has a useful side effect: commenting a stage
+out degrades to silence rather than to whatever was in the buffer last block,
+so a bypassed stage sounds like a bypassed stage instead of like a bug. Both
+bypasses are verified — comment either call out and the input meter keeps
+reading while the output goes to true silence.
+
 ## Filling in the stages
 
 **Granular.** A capture ring buffer of a few seconds — it is the delay line and

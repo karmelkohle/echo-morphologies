@@ -12,13 +12,19 @@ import type { AudioEngineCore, EngineConfig } from './types'
 /**
  * The whole signal chain, and the only place audio is touched.
  *
- *     capture ─▶ trim ─▶ granular ─▶ directional bus ─▶ binaural ─▶ gain ─▶ limiter ─▶ ears
- *                  │                                                  │        │
- *                input meter                                    mute ramp   output meters
+ *        1. CAPTURE        2. GRANULAR        3. BINAURAL       4. OUTPUT
+ *     mic ─▶ trim ─────▶ grain cloud ─▶ ▮▮▮ ─▶ HRTF convolve ─▶ gain ─▶ limiter ─▶ ears
+ *              │                    directional bus      │       │
+ *         input meter              (lanes + directions)  │   mute ramp, output meters
  *
- * Granular and binaural are pass-throughs today (see their files); the rest is
- * real. That is the point of this commit — the frame is load-bearing, so the
- * DSP can be filled in one stage at a time without moving anything around it.
+ * `process()` below is written as those four numbered sections so a stage can
+ * be swapped, rewritten or commented out on its own. Granular and binaural are
+ * pass-throughs today (see their files); everything around them is real.
+ *
+ * Each stage is handed buffers this class has already zeroed and ADDS into
+ * them, which is both what the real DSP wants — grains accumulate, and the
+ * renderer sums one convolution per lane — and what makes commenting a stage
+ * out degrade to silence rather than to last block's audio.
  *
  * Realtime rules this file obeys, and any future stage must too: no allocation,
  * no exceptions and no unbounded loops inside `process()`. Everything is sized
@@ -130,18 +136,51 @@ export class EngineCore implements AudioEngineCore {
     const source = input.length > 0 ? input[0] : undefined
     const captured = source !== undefined && source.length >= n ? source : this.silence
 
-    // ── capture ─────────────────────────────────────────────────────────────
+    // ═══ 1. CAPTURE ═════════════════════════════════════════════════════════
+    // Microphone in, trimmed and metered. Mono by design: one AirPod mic.
+    // After this, `mono[0..n)` is the dry signal everything downstream works
+    // from — the one place to tap if you want to record or analyse the input.
+
     const mono = this.monoIn
     for (let i = 0; i < n; i++) {
       mono[i] = captured[i] * this.inputTrim.next()
     }
     this.inputMeter.accumulate(mono, n)
 
-    // ── engine ──────────────────────────────────────────────────────────────
+    // ═══ 2. GRANULAR SYNTHESIS ══════════════════════════════════════════════
+    // NOT IMPLEMENTED — the stage copies the capture into lane 0 and leaves
+    // the rest of the field silent, so this is a pass-through today.
+    //
+    //   in   `mono[0..n)`, the dry capture
+    //   out  `this.bus`, already zeroed — lanes are ADDED to, and each lane's
+    //        direction is set to where its grains should be heard from
+    //
+    // Experiment either by editing stages/GranularStage.ts, or by writing
+    // straight into `this.bus.lanes[k]` here and skipping the call. Commenting
+    // the call out is safe and yields silence, not stale audio.
+
+    this.bus.clear(n)
     this.granular.process(mono, this.bus, n)
+
+    // ═══ 3. BINAURAL RENDERING (HRTF CONVOLUTION) ═══════════════════════════
+    // NOT IMPLEMENTED — the stage sums the field into both ears and ignores
+    // the directions entirely, so the output is dual mono.
+    //
+    //   in   `this.bus`, the directional field
+    //   out  `left` / `right` over [0..n), already zeroed and ADDED to
+    //
+    // This is where each lane gets convolved with the HRIR pair for its
+    // direction. Same deal: edit stages/BinauralStage.ts, or write the ears
+    // directly here. Commenting the call out yields silence.
+
+    left.fill(0, 0, n)
+    right.fill(0, 0, n)
     this.binaural.process(this.bus, left, right, n)
 
-    // ── output ──────────────────────────────────────────────────────────────
+    // ═══ 4. OUTPUT ══════════════════════════════════════════════════════════
+    // Level, then protection. Nothing here shapes the sound — the limiter is a
+    // safety net, not part of the instrument, so new DSP belongs above it.
+
     for (let i = 0; i < n; i++) {
       const gain = this.outputGain.next() * this.muteGain.next()
       left[i] *= gain
