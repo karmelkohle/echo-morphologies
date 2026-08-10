@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="r"><rect x="0" y="0" width="1024" height="1024" rx="180" ry="180"/></clipPath>
+    <filter id="grain" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" stitchTiles="stitch" result="n"/>
+      <feColorMatrix in="n" type="saturate" values="0" result="ng"/>
+      <feComponentTransfer in="ng" result="na"><feFuncA type="table" tableValues="0 0.055"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="na" mode="multiply"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#r)" filter="url(#grain)">
+    <rect width="1024" height="1024" fill="#8FBDBE"/>
+    <ellipse cx="665" cy="330" rx="290" ry="245" fill="#356D73"/>
+    <ellipse cx="360" cy="430" rx="335" ry="300" fill="#F18B73"/>
+    <path d="M0 652 C90 610 155 662 211 721 C264 776 310 792 353 734 C389 686 398 602 448 592 C503 580 472 742 521 747 C563 752 561 541 620 542 C675 543 659 733 704 731 C749 729 751 647 795 640 C842 632 826 712 865 709 C908 706 920 602 1024 579 L1024 1024 L0 1024 Z" fill="#F4E2C1"/>
+    <path d="M0 907 C94 942 150 894 216 800 C277 714 323 730 351 820 C379 910 414 913 440 792 C468 658 502 725 515 856 C529 989 565 946 581 793 C597 637 632 723 645 865 C658 1001 696 942 723 796 C748 661 782 742 804 844 C827 950 859 946 889 859 C922 763 958 732 1024 724 L1024 1024 L0 1024 Z" fill="#9A8DA7"/>
+  </g>
+</svg>
