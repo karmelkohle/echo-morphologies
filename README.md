@@ -57,15 +57,27 @@ repository in another account — useful when the account that can actually
 publish Pages is not the account the work happens in. It does nothing until two
 values exist under *Settings → Secrets and variables → Actions*:
 
-| Kind     | Name           | Value                                                              |
-| -------- | -------------- | ------------------------------------------------------------------ |
-| Variable | `MIRROR_REPO`  | `owner/name` of the target                                           |
-| Secret   | `MIRROR_TOKEN` | fine-grained PAT issued by the target's account, scoped to that one repository, with **Contents: Read and write** *and* **Workflows: Read and write** |
+| Tab           | Name           | Value                                                              |
+| ------------- | -------------- | ------------------------------------------------------------------ |
+| **Variables** | `MIRROR_REPO`  | `owner/name` of the target                                           |
+| **Secrets**   | `MIRROR_TOKEN` | fine-grained PAT issued by the target's account, scoped to that one repository, with **Contents: Read and write** *and* **Workflows: Read and write** |
 
-Both permissions are needed. Contents alone looks sufficient and is not — this
-repository carries files under `.github/workflows/`, and GitHub rejects any
+The tab matters: the two tabs are separate stores, and the workflow reads
+`MIRROR_REPO` from Variables only. If either value is missing or misplaced, the
+mirror run says exactly which and where, rather than pushing nothing.
+
+Both token permissions are needed. Contents alone looks sufficient and is not —
+this repository carries files under `.github/workflows/`, and GitHub rejects any
 token-authored push that creates or changes a workflow file unless the token
 also carries Workflows.
+
+Files tracked by Git LFS (the HRTF sets under `resources/hrtfs/`) are mirrored
+for real: the LFS objects are pushed into the target's LFS storage before the
+commits, so the target never holds pointers it cannot resolve. Each mirror run
+re-downloads those objects from this repository's LFS storage, which counts
+against its LFS bandwidth quota — with ~47 MB of sets that is roughly twenty
+runs per free-tier month. If that starts to bite, add a cache step, or store
+anything under GitHub's 100 MB blob limit as plain git objects instead.
 
 Because the token belongs to the target's account, that account is what performs
 the push and what the target's history records — the source account never

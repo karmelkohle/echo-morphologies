@@ -3,21 +3,27 @@ name: Mirror to a second repository
 # Keeps a copy of this repository in another account in step with this one, so
 # work done here shows up there without copying files by hand.
 #
-# Inert until two settings exist, under
-# Settings → Secrets and variables → Actions:
+# Configuration lives on THIS repository (the source), under
+# Settings → Secrets and variables → Actions. That page has two tabs, and one
+# value goes in each — the tab matters, they are not interchangeable:
 #
-#   Variable  MIRROR_REPO    owner/name of the target,
-#                            e.g. someone-else/echo-morphologies
-#   Secret    MIRROR_TOKEN   a fine-grained personal access token issued by the
-#                            account that owns the target, scoped to that one
-#                            repository, with two permissions:
-#                              Contents:  Read and write
-#                              Workflows: Read and write
+#   VARIABLES tab   MIRROR_REPO    owner/name of the target repository
+#   SECRETS tab     MIRROR_TOKEN   a fine-grained personal access token issued
+#                                  by the account that owns the target, scoped
+#                                  to that one repository, with two permissions:
+#                                    Contents:  Read and write
+#                                    Workflows: Read and write
 #
-# Both are needed. Contents alone looks sufficient and is not: this repository
-# carries files under .github/workflows/, and GitHub refuses any token-authored
-# push that creates or changes a workflow file unless the token also carries
-# Workflows. The failure is at push time and names the offending file.
+# Both permissions are needed: this repository carries files under
+# .github/workflows/, and GitHub refuses a token-authored push that creates or
+# changes a workflow file unless the token also carries Workflows.
+#
+# Large files tracked by Git LFS are mirrored too — the LFS objects are pushed
+# to the target's LFS storage before the commits, so the target never holds
+# pointers to objects it does not have. Each run re-downloads the LFS objects
+# from this repository's LFS storage, which counts against its LFS bandwidth
+# quota; if that ever bites, the fix is a cache step, or storing files under
+# GitHub's 100 MB blob limit as plain git objects instead.
 #
 # The mirror is downstream, not a second place to work. The push is forced, so
 # any commit that exists only over there is overwritten on the next push here.
@@ -25,8 +31,9 @@ name: Mirror to a second repository
 # history unrelated to this one, and no fast-forward can join the two. Commit
 # here, test there.
 #
-# Do not set these two values on the mirror itself, or the pair will push at
-# each other.
+# On the target repository this workflow also exists (it gets mirrored like
+# everything else) and runs unconfigured — it says so and stops. Ignore it
+# there, and do not configure it there, or the pair will push at each other.
 
 on:
   push:
@@ -42,34 +49,61 @@ concurrency:
 
 jobs:
   mirror:
-    # Skips silently on any repository that has not been told where to push,
-    # which includes the mirror itself.
-    if: vars.MIRROR_REPO != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          # The target needs the whole history, not the single commit a default
-          # checkout fetches.
-          fetch-depth: 0
-
-      - name: Check the token is present
+      # Misconfiguration used to skip the whole job silently, which reads as
+      # "the mirror is broken and says nothing". Now every state says what it
+      # is: missing entirely, in the wrong tab, or missing its token.
+      - name: Check configuration
+        id: config
         env:
-          MIRROR_REPO: ${{ vars.MIRROR_REPO }}
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          HAS_VAR: ${{ vars.MIRROR_REPO != '' }}
+          VAR_IN_SECRETS_TAB: ${{ secrets.MIRROR_REPO != '' }}
+          HAS_TOKEN: ${{ secrets.MIRROR_TOKEN != '' }}
         run: |
-          if [ -z "$MIRROR_TOKEN" ]; then
-            echo "::error title=Mirror not configured::MIRROR_REPO is set to \
-            '$MIRROR_REPO' but the MIRROR_TOKEN secret is missing. Add a \
-            fine-grained token with Contents: Read and write on that repository."
+          if [ "$HAS_VAR" != "true" ]; then
+            if [ "$VAR_IN_SECRETS_TAB" = "true" ]; then
+              echo "::error title=MIRROR_REPO is in the wrong tab::MIRROR_REPO \
+          exists as a SECRET on ${{ github.repository }}, but this workflow reads \
+          it as a VARIABLE — the two tabs are separate stores. Delete the secret \
+          and re-create it under Settings → Secrets and variables → Actions → \
+          Variables tab."
+              exit 1
+            fi
+            echo "::warning title=Mirror not configured::No MIRROR_REPO variable \
+          exists on ${{ github.repository }}, so nothing was pushed. To turn the \
+          mirror on, add it under Settings → Secrets and variables → Actions → \
+          Variables tab. If this repository IS the mirror target, this message is \
+          expected — ignore it."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error title=MIRROR_TOKEN is missing::MIRROR_REPO is set to \
+          '${{ vars.MIRROR_REPO }}' but there is no MIRROR_TOKEN secret on \
+          ${{ github.repository }}. Add one under Settings → Secrets and \
+          variables → Actions → Secrets tab: a fine-grained token issued by the \
+          target's account, scoped to that repository, with Contents and \
+          Workflows both Read and write."
             exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
 
-      # The push is performed by whoever owns the token, and that account is what
-      # the target's history records — not this repository's owner. Printing the
-      # login makes that checkable rather than assumed: if this names the source
-      # account, the wrong token is installed.
+      - if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v5
+        with:
+          # The target needs the whole history, not the single commit a default
+          # checkout fetches; lfs pulls the real large-file objects so they can
+          # be forwarded, not just the pointers that stand in for them.
+          fetch-depth: 0
+          lfs: true
+
+      # The push is performed by whoever owns the token, and that account is
+      # what the target's history records — not this repository's owner.
+      # Printing the login makes that checkable rather than assumed: if this
+      # names the source account, the wrong token is installed.
       - name: Identify the pushing account
+        if: steps.config.outputs.configured == 'true'
         env:
           MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
         run: |
@@ -85,15 +119,25 @@ jobs:
           fi
 
       - name: Push to ${{ vars.MIRROR_REPO }}
+        if: steps.config.outputs.configured == 'true'
         env:
           MIRROR_REPO: ${{ vars.MIRROR_REPO }}
           MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
         run: |
-          # The URL is passed straight to `git push` rather than registered with
-          # `git remote add`, so the token never lands in .git/config. Actions
-          # masks the value itself in the log.
-          git push --force \
-            "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" \
-            "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          # A named remote rather than a bare URL because git-lfs needs one it
+          # can resolve credentials against. The token only ever exists in the
+          # config of this ephemeral runner, and Actions masks it in the log.
+          git remote add mirror \
+            "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
+
+          # Objects before refs: once the commits land, their pointers must
+          # already resolve, or a checkout on the target — including its own
+          # Pages build, which starts immediately — would see broken files.
+          # Objects the target already has are skipped, so this is cheap after
+          # the first run.
+          git lfs push --all mirror
+
+          git push --force mirror "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          git remote remove mirror
 
           echo "::notice title=Mirrored::${GITHUB_REF_NAME} → ${MIRROR_REPO}"
