@@ -1,0 +1,23 @@
+{
+  "name": "echo-morphologies",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Progressive web app that captures live sound, re-composes it with granular synthesis and re-spatializes it with HRTF convolution.",
+  "scripts": {
+    "dev": "npm run build:worklet && vite",
+    "dev:https": "HTTPS=1 npm run dev",
+    "dev:worklet": "vite build --config vite.worklet.config.ts --watch",
+    "build:worklet": "vite build --config vite.worklet.config.ts",
+    "build": "npm run typecheck && npm run build:worklet && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.2.1"
+  }
+}

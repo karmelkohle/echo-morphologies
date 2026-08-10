@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+
+# Built by `npm run build:worklet` — generated, not source.
+public/worklet/
+
+.DS_Store
+.vite/

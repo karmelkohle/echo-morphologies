@@ -1,0 +1,59 @@
+name: Deploy to GitHub Pages
+
+# The app needs an https origin to be testable on a phone — getUserMedia is
+# blocked on plain http, and the service worker will not register either. Pages
+# is the shortest route from a push to a URL Safari will trust.
+#
+# Requires Settings → Pages → Source: "GitHub Actions" to be selected once.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/audio-pwa-granular-framework-gpbn7c
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          # Pages serves the site from /<repo>/, so the bundle's asset URLs and
+          # the worklet path have to be prefixed to match.
+          PAGES_BASE: /${{ github.event.repository.name }}/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

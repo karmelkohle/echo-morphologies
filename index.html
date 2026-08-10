@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover so the layout can reach under the notch and home
+         indicator; the CSS pads itself back out with the safe-area insets. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0b0e13" />
+    <meta
+      name="description"
+      content="Live capture, granular re-composition and HRTF spatialisation, in the browser."
+    />
+
+    <!-- Home-screen install on iOS. `apple-mobile-web-app-capable` is the old
+         spelling and still what older iOS reads; the manifest covers current. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Echo Morph" />
+
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <link rel="icon" href="icons/icon-192.png" />
+
+    <title>echo morphologies</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="masthead">
+        <div class="identity">
+          <h1>echo morphologies</h1>
+          <p class="subtitle">capture &middot; granulate &middot; respatialise</p>
+        </div>
+        <div class="state" id="state-badge" data-state="idle">
+          <span class="state-dot" aria-hidden="true"></span>
+          <span class="state-label" id="state-label">idle</span>
+        </div>
+      </header>
+
+      <p class="notice" id="notice" hidden></p>
+
+      <section class="panel warning" id="headphone-warning">
+        <strong>Wear headphones before starting.</strong>
+        This routes the microphone straight back to the output. On the phone's
+        own speaker that is a feedback loop.
+      </section>
+
+      <section class="panel transport">
+        <button class="primary" id="transport" type="button">Start listening</button>
+      </section>
+
+      <section class="panel" aria-labelledby="meters-heading">
+        <h2 id="meters-heading">Levels</h2>
+        <div class="meters" id="meters"></div>
+        <!-- Evenly spaced because the meter maps linearly in decibels. -->
+        <p class="scale"><span>−60</span><span>−45</span><span>−30</span><span>−15</span><span>0 dB</span></p>
+      </section>
+
+      <section class="panel" aria-labelledby="controls-heading">
+        <h2 id="controls-heading">Controls</h2>
+        <div class="controls" id="controls"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="chain-heading">
+        <h2 id="chain-heading">Signal chain</h2>
+        <ol class="chain">
+          <li><span class="stage-name">capture</span><span class="stage-note">mono, unprocessed</span></li>
+          <li><span class="stage-name">input trim</span><span class="stage-note">smoothed gain</span></li>
+          <li>
+            <span class="stage-name">granular</span
+            ><span class="stage-note stage-todo">pass-through &mdash; not implemented</span>
+          </li>
+          <li>
+            <span class="stage-name">binaural</span
+            ><span class="stage-note stage-todo">pass-through &mdash; not implemented</span>
+          </li>
+          <li><span class="stage-name">output gain</span><span class="stage-note">smoothed, mute-ramped</span></li>
+          <li><span class="stage-name">limiter</span><span class="stage-note">safety ceiling, −1 dBFS</span></li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="status-heading">
+        <h2 id="status-heading">Status</h2>
+        <dl class="status" id="status"></dl>
+      </section>
+
+      <footer class="colophon">
+        <p>
+          Framework build. The granular and HRTF stages are wired into the chain
+          but pass audio through unchanged &mdash; see
+          <code>docs/ARCHITECTURE.md</code>.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
