@@ -19,6 +19,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 const PORT = Number(process.env.PORT ?? 4173)
@@ -38,10 +39,21 @@ const check = (ok, message) => {
 
 let server = null
 if (!process.env.APP_URL) {
-  server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
+  // The binary directly rather than through `npx`: killing npx leaves the vite
+  // process it spawned holding the port, and the next run fails to start.
+  const vite = fileURLToPath(
+    new URL(
+      `../node_modules/.bin/vite${process.platform === 'win32' ? '.cmd' : ''}`,
+      import.meta.url,
+    ),
+  )
+  server = spawn(vite, ['preview', '--port', String(PORT), '--strictPort'], {
     stdio: 'ignore',
-    detached: false,
   })
+  // Also on the way out of a failed assertion or a thrown page action: a
+  // surviving preview server holds the port and the next run fails to start
+  // for a reason that has nothing to do with the code.
+  process.on('exit', () => server?.kill())
   await waitForServer(BASE, 15000)
 }
 
