@@ -49,6 +49,7 @@ export interface MeterSnapshot {
   rightRms: number
   limiterReductionDb: number
   inputClipCount: number
+  activeGrains: number
   /** Total render blocks since the engine started. */
   blocks: number
   /** Render-clock discontinuities since the engine started. */
@@ -280,6 +281,7 @@ export class AudioEngine {
       rightRms: values[MeterSlot.OutputRightRms],
       limiterReductionDb: values[MeterSlot.LimiterReductionDb],
       inputClipCount: values[MeterSlot.InputClipCount],
+      activeGrains: values[MeterSlot.ActiveGrains],
       blocks: message.blocks,
       clockGaps: message.clockGaps,
       renderRatio: this.renderRatio,

@@ -71,7 +71,7 @@
           <li><span class="stage-name">input trim</span><span class="stage-note">smoothed gain</span></li>
           <li>
             <span class="stage-name">granular</span
-            ><span class="stage-note stage-todo">pass-through &mdash; not implemented</span>
+            ><span class="stage-note">ring buffer &rarr; grain cloud on 8 directional lanes</span>
           </li>
           <li>
             <span class="stage-name">binaural</span
@@ -89,8 +89,8 @@
 
       <footer class="colophon">
         <p>
-          Framework build. The granular and HRTF stages are wired into the chain
-          but pass audio through unchanged &mdash; see
+          The granular delay is live; HRTF rendering is next &mdash; the chain
+          above shows what each stage really does. See
           <code>docs/ARCHITECTURE.md</code>.
         </p>
       </footer>

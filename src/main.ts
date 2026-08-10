@@ -133,6 +133,7 @@ function renderMeters(snapshot: MeterSnapshot | null): void {
     status.set('clock gaps', '—')
     status.set('input clipping', '—')
     status.set('limiter', '—')
+    status.set('grains sounding', '—')
     return
   }
 
@@ -159,6 +160,7 @@ function renderMeters(snapshot: MeterSnapshot | null): void {
     snapshot.limiterReductionDb > 0.05 ? `−${snapshot.limiterReductionDb.toFixed(1)} dB` : 'inactive',
     snapshot.limiterReductionDb > 0.05 ? 'warn' : 'neutral',
   )
+  status.set('grains sounding', String(Math.round(snapshot.activeGrains)))
 }
 
 // ── animation ─────────────────────────────────────────────────────────────

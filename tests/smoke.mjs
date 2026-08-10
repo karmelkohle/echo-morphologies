@@ -126,53 +126,73 @@ const snapshot = () =>
 /** The readout uses a typographic minus and shows −∞ at the floor. */
 const dbOf = (text) => (text === '−∞' ? -Infinity : Number(text))
 
+const sampleWindow = async (label, durationMs) => {
+  const peaks = { input: -Infinity, 'out L': -Infinity, 'out R': -Infinity }
+  let last = null
+  let maxGrains = 0
+  for (const deadline = Date.now() + durationMs; Date.now() < deadline; ) {
+    last = await snapshot()
+    for (const [name, text] of Object.entries(last.meters)) {
+      peaks[name] = Math.max(peaks[name], dbOf(text))
+    }
+    maxGrains = Math.max(maxGrains, Number(last.rows['grains sounding'] ?? 0) || 0)
+    await page.waitForTimeout(60)
+  }
+  console.log(`\n--- ${label} ---`)
+  console.log('peaks:', peaks, '| max grains sounding:', maxGrains)
+  return { peaks, last, maxGrains }
+}
+
 await page.goto(BASE, { waitUntil: 'networkidle' })
 await page.click('#transport')
 
-// The synthetic microphone beeps intermittently, so a single reading lands in a
-// gap as often as not. Poll and keep the loudest.
-const peaks = { input: -Infinity, 'out L': -Infinity, 'out R': -Infinity }
-let running = null
-for (const deadline = Date.now() + SAMPLE_MS; Date.now() < deadline; ) {
-  running = await snapshot()
-  for (const [name, text] of Object.entries(running.meters)) {
-    peaks[name] = Math.max(peaks[name], dbOf(text))
-  }
-  await page.waitForTimeout(60)
-}
+// ── Phase 1: granular active (the default) ─────────────────────────────────
+// The grain cloud reads the past through jittered taps, so exact levels are
+// not predictable — what must hold is that the chain is audibly alive, grains
+// are actually sounding, and the graph keeps realtime.
+const granular = await sampleWindow('granular active', SAMPLE_MS)
+check(granular.last.state === 'running', `state was "${granular.last.state}", expected "running"`)
+check(!granular.last.notice, `notice shown: ${granular.last.notice}`)
+check(granular.peaks.input > -40, `input meter never moved (max ${granular.peaks.input} dB)`)
+check(granular.peaks['out L'] > -40, `granular out L never moved (max ${granular.peaks['out L']} dB)`)
+check(granular.peaks['out R'] > -40, `granular out R never moved (max ${granular.peaks['out R']} dB)`)
+check(granular.maxGrains > 0, 'no grains ever sounded while granular was on')
+check(granular.maxGrains <= 64, `grain count ${granular.maxGrains} exceeds the pool`)
 
-console.log('state:', running.state)
-console.log('peaks:', peaks)
-console.log('status:', running.rows)
+const granularRate = Number((granular.last.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
+check(granularRate >= 95, `render rate with granular on: ${granular.last.rows['render rate']}`)
+check(granular.last.rows['clock gaps'] === '0', `clock gaps ${granular.last.rows['clock gaps']}`)
+check(
+  granular.last.rows['render quantum'] === '128 frames',
+  `render quantum ${granular.last.rows['render quantum']}`,
+)
+check(
+  granular.last.rows['capture processing'] === 'none (raw)',
+  `capture processing ${granular.last.rows['capture processing']}`,
+)
 
-check(running.state === 'running', `state was "${running.state}", expected "running"`)
-check(!running.notice, `notice shown: ${running.notice}`)
-check(peaks.input > -40, `input meter never moved (max ${peaks.input} dB)`)
-check(peaks['out L'] > -40, `out L never moved (max ${peaks['out L']} dB)`)
-check(peaks['out R'] > -40, `out R never moved (max ${peaks['out R']} dB)`)
+// ── Phase 2: granular bypassed — the exact reference path ──────────────────
+// Bypass must restore the provable pass-through: output tracks input at
+// exactly the output gain's offset, and both ears agree.
+await page.click('#param-granular')
+await page.waitForTimeout(400)
+const bypass = await sampleWindow('granular bypassed', SAMPLE_MS)
+check(bypass.peaks['out L'] > -40, `bypass out L never moved (max ${bypass.peaks['out L']} dB)`)
 
-const drop = peaks.input - peaks['out L']
+const drop = bypass.peaks.input - bypass.peaks['out L']
 check(
   Math.abs(drop - EXPECTED_DROP_DB) < 3,
-  `input→output drop was ${drop.toFixed(1)} dB, expected ~${EXPECTED_DROP_DB}`,
+  `bypass input→output drop was ${drop.toFixed(1)} dB, expected ~${EXPECTED_DROP_DB}`,
 )
 check(
-  Math.abs(peaks['out L'] - peaks['out R']) < 0.2,
-  `channels disagree: L ${peaks['out L']} vs R ${peaks['out R']}`,
+  Math.abs(bypass.peaks['out L'] - bypass.peaks['out R']) < 0.2,
+  `bypass channels disagree: L ${bypass.peaks['out L']} vs R ${bypass.peaks['out R']}`,
 )
-
-const renderRate = Number((running.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
-check(renderRate >= 95, `render rate ${running.rows['render rate']}`)
-check(running.rows['clock gaps'] === '0', `clock gaps ${running.rows['clock gaps']}`)
-check(running.rows['render quantum'] === '128 frames', `render quantum ${running.rows['render quantum']}`)
-check(
-  running.rows['capture processing'] === 'none (raw)',
-  `capture processing ${running.rows['capture processing']}`,
-)
+check(bypass.last.rows['grains sounding'] === '0', 'grains still sounding while bypassed')
 
 // Mute must reach silence while the input keeps reading. The readout is a
 // decaying peak hold, so wait out the ballistics and check where it settled.
-await page.click('button.toggle')
+await page.click('#param-mute')
 let mutedInputPeak = -Infinity
 for (const deadline = Date.now() + MUTE_SETTLE_MS; Date.now() < deadline; ) {
   const s = await snapshot()
@@ -187,7 +207,7 @@ check(
   muted.meters['out L'] === '−∞',
   `output did not fall silent while muted (settled at ${muted.meters['out L']})`,
 )
-await page.click('button.toggle')
+await page.click('#param-mute')
 
 await page.click('#transport')
 await page.waitForTimeout(600)

@@ -6,8 +6,11 @@ import { dbToGain } from './dsp/math'
 import { METER_SLOT_COUNT, MeterSlot } from './meters'
 import { PARAM_BY_ID, ParamId } from './params'
 import { BinauralStage } from './stages/BinauralStage'
-import { GranularStage } from './stages/GranularStage'
+import { GranularStage, type GrainEnvShape, type GrainScheduler } from './stages/GranularStage'
 import type { AudioEngineCore, EngineConfig } from './types'
+
+/** Concurrent grain streams with distinct directions; see the bus comment. */
+const LANE_COUNT = 8
 
 /**
  * The whole signal chain, and the only place audio is touched.
@@ -18,8 +21,8 @@ import type { AudioEngineCore, EngineConfig } from './types'
  *         input meter              (lanes + directions)  │   mute ramp, output meters
  *
  * `process()` below is written as those four numbered sections so a stage can
- * be swapped, rewritten or commented out on its own. Granular and binaural are
- * pass-throughs today (see their files); everything around them is real.
+ * be swapped, rewritten or commented out on its own. Granular is the spatdsp
+ * design, live; binaural is still a directionless pass-through sum.
  *
  * Each stage is handed buffers this class has already zeroed and ADDS into
  * them, which is both what the real DSP wants — grains accumulate, and the
@@ -71,9 +74,11 @@ export class EngineCore implements AudioEngineCore {
     this.silence = new Float32Array(maxBlockSize)
     this.spareRight = new Float32Array(maxBlockSize)
 
-    // One lane while the granulator is a pass-through. The count becomes a
-    // spatial-resolution parameter once grains carry their own directions.
-    this.bus = new DirectionalBus(1, maxBlockSize)
+    // The spatial resolution of the piece: how many concurrent grain streams
+    // can hold distinct directions, and how many convolutions the binaural
+    // stage runs per block. Grains are dealt onto lanes round-robin, so a
+    // direction only blurs when more than LANE_COUNT grains overlap.
+    this.bus = new DirectionalBus(LANE_COUNT, maxBlockSize)
 
     for (const [param, smoothed] of this.smoothers()) {
       const spec = PARAM_BY_ID.get(param)
@@ -103,6 +108,7 @@ export class EngineCore implements AudioEngineCore {
   }
 
   setParam(id: number, value: number): void {
+    const granular = this.granular
     switch (id) {
       case ParamId.InputTrimDb:
         this.inputTrim.setTarget(dbToGain(value))
@@ -115,6 +121,59 @@ export class EngineCore implements AudioEngineCore {
         // step to zero, which is a click.
         this.muteGain.setTarget(value >= 0.5 ? 0 : 1)
         break
+
+      // Grain parameters are read at spawn time, so plain assignment is
+      // click-free by construction — each grain is born with one value and
+      // keeps it for life.
+      case ParamId.GranularEnabled:
+        granular.enabled = value >= 0.5
+        break
+      case ParamId.BufferSec:
+        granular.bufferSec = value
+        break
+      case ParamId.DelayMs:
+        granular.delayMs = value
+        break
+      case ParamId.DelayDevMs:
+        granular.delayDevMs = value
+        break
+      case ParamId.Density:
+        granular.density = value
+        break
+      case ParamId.LengthMs:
+        granular.lengthMs = value
+        break
+      case ParamId.LengthJitter:
+        granular.lengthJitter = value
+        break
+      case ParamId.PitchSemis:
+        granular.pitchSemis = value
+        break
+      case ParamId.PitchDevSemis:
+        granular.pitchDevSemis = value
+        break
+      case ParamId.ReverseProb:
+        granular.reverseProb = value
+        break
+      case ParamId.EnvShape:
+        granular.envShape = Math.round(value) as GrainEnvShape
+        break
+      case ParamId.Scheduler:
+        granular.scheduler = Math.round(value) as GrainScheduler
+        break
+      case ParamId.AzimuthDeg:
+        granular.azimuthDeg = value
+        break
+      case ParamId.AzimuthDevDeg:
+        granular.azimuthDevDeg = value
+        break
+      case ParamId.ElevationDeg:
+        granular.elevationDeg = value
+        break
+      case ParamId.ElevationDevDeg:
+        granular.elevationDevDeg = value
+        break
+
       default:
         break
     }
@@ -148,12 +207,13 @@ export class EngineCore implements AudioEngineCore {
     this.inputMeter.accumulate(mono, n)
 
     // ═══ 2. GRANULAR SYNTHESIS ══════════════════════════════════════════════
-    // NOT IMPLEMENTED — the stage copies the capture into lane 0 and leaves
-    // the rest of the field silent, so this is a pass-through today.
+    // The spatdsp Granular design on the DirectionalBus: ring buffer, grain
+    // scheduler, per-grain deviation draws, round-robin lane dealing. The
+    // `Granular` toggle bypasses it into a dry lane-0 pass-through.
     //
     //   in   `mono[0..n)`, the dry capture
     //   out  `this.bus`, already zeroed — lanes are ADDED to, and each lane's
-    //        direction is set to where its grains should be heard from
+    //        direction is set at grain spawn
     //
     // Experiment either by editing stages/GranularStage.ts, or by writing
     // straight into `this.bus.lanes[k]` here and skipping the call. Commenting
@@ -203,6 +263,7 @@ export class EngineCore implements AudioEngineCore {
     dst[MeterSlot.OutputRightRms] = this.rightMeter.rmsLevel
     dst[MeterSlot.LimiterReductionDb] = this.limiter.reductionDb
     dst[MeterSlot.InputClipCount] = this.inputMeter.clipCount
+    dst[MeterSlot.ActiveGrains] = this.granular.activeGrainCount()
 
     this.inputMeter.drain()
     this.leftMeter.drain()

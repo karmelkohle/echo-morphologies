@@ -253,6 +253,35 @@ button.primary:active {
   gap: 16px;
 }
 
+.control-group {
+  margin: 10px 0 -4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  border-bottom: 1px solid var(--panel-edge);
+  padding-bottom: 5px;
+}
+
+.control-group:first-child {
+  margin-top: 0;
+}
+
+select.enum {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  background: #1a212b;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 .control-head {
   display: flex;
   align-items: baseline;
@@ -331,10 +360,16 @@ button.toggle {
   cursor: pointer;
 }
 
-button.toggle[aria-pressed='true'] {
+button.toggle[aria-pressed='true'][data-tone='alarm'] {
   border-color: rgb(232 97 90 / 55%);
   background: rgb(232 97 90 / 16%);
   color: #f3b1ad;
+}
+
+button.toggle[aria-pressed='true'][data-tone='positive'] {
+  border-color: rgb(90 209 192 / 45%);
+  background: rgb(90 209 192 / 12%);
+  color: var(--accent);
 }
 
 /* ── chain ─────────────────────────────────────────────────────────────── */
