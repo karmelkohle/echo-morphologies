@@ -50,6 +50,35 @@ have to accept it before the microphone will open.
 Once it launches, the status panel's *display mode* row tells you whether you
 are in the installed standalone app or still in a browser tab.
 
+## Keeping a second copy in step
+
+`.github/workflows/mirror.yml` pushes every commit on to a copy of this
+repository in another account — useful when the account that can actually
+publish Pages is not the account the work happens in. It does nothing until two
+values exist under *Settings → Secrets and variables → Actions*:
+
+| Kind     | Name           | Value                                                                                    |
+| -------- | -------------- | ---------------------------------------------------------------------------------------- |
+| Variable | `MIRROR_REPO`  | `owner/name` of the target                                                                 |
+| Secret   | `MIRROR_TOKEN` | fine-grained PAT from the target's account, scoped to that one repo, `Contents: Read and write` |
+
+The mirror is downstream, not a second place to work: the push is forced, so a
+commit that exists only there is overwritten on the next push here. Forcing is
+unavoidable when the target was populated by copying files in, because its
+history is unrelated to this one and no fast-forward joins them. Don't set these
+two values on the mirror, or the pair will push at each other.
+
+To pull by hand instead, from a clone of the target:
+
+```sh
+git remote add upstream https://github.com/konstfontaine/echo-morphologies.git
+git fetch upstream
+git reset --hard upstream/claude/audio-pwa-granular-framework-gpbn7c
+git push --force
+```
+
+That needs credentials for this repository, since it is private.
+
 ## Development
 
 ```sh

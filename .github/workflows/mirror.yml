@@ -1,0 +1,69 @@
+name: Mirror to a second repository
+
+# Keeps a copy of this repository in another account in step with this one, so
+# work done here shows up there without copying files by hand.
+#
+# Inert until two settings exist, under
+# Settings → Secrets and variables → Actions:
+#
+#   Variable  MIRROR_REPO    owner/name of the target,
+#                            e.g. karmelkohle/echo-morphologies
+#   Secret    MIRROR_TOKEN   a fine-grained personal access token issued by the
+#                            account that owns the target, scoped to that one
+#                            repository, with Contents: Read and write.
+#                            Nothing else — it does not need any other scope.
+#
+# The mirror is downstream, not a second place to work. The push is forced, so
+# any commit that exists only over there is overwritten on the next push here.
+# It has to be forced: a repository that was populated by copying files in has a
+# history unrelated to this one, and no fast-forward can join the two. Commit
+# here, test there.
+#
+# Do not set these two values on the mirror itself, or the pair will push at
+# each other.
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    # Skips silently on any repository that has not been told where to push,
+    # which includes the mirror itself.
+    if: vars.MIRROR_REPO != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The target needs the whole history, not the single commit a default
+          # checkout fetches.
+          fetch-depth: 0
+
+      - name: Push to ${{ vars.MIRROR_REPO }}
+        env:
+          MIRROR_REPO: ${{ vars.MIRROR_REPO }}
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error title=Mirror not configured::MIRROR_REPO is set to \
+            '$MIRROR_REPO' but the MIRROR_TOKEN secret is missing. Add a \
+            fine-grained token with Contents: Read and write on that repository."
+            exit 1
+          fi
+
+          # The URL is passed straight to `git push` rather than registered with
+          # `git remote add`, so the token never lands in .git/config. Actions
+          # masks the value itself in the log.
+          git push --force \
+            "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" \
+            "HEAD:refs/heads/${GITHUB_REF_NAME}"
+
+          echo "::notice title=Mirrored::${GITHUB_REF_NAME} → ${MIRROR_REPO}"
