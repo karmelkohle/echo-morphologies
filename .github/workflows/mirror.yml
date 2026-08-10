@@ -47,7 +47,7 @@ jobs:
           # checkout fetches.
           fetch-depth: 0
 
-      - name: Push to ${{ vars.MIRROR_REPO }}
+      - name: Check the token is present
         env:
           MIRROR_REPO: ${{ vars.MIRROR_REPO }}
           MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
@@ -59,6 +59,30 @@ jobs:
             exit 1
           fi
 
+      # The push is performed by whoever owns the token, and that account is what
+      # the target's history records — not this repository's owner. Printing the
+      # login makes that checkable rather than assumed: if this names the source
+      # account, the wrong token is installed.
+      - name: Identify the pushing account
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          login=$(curl -fsS -H "Authorization: Bearer $MIRROR_TOKEN" \
+            https://api.github.com/user 2>/dev/null | jq -r '.login // empty') || true
+          if [ -n "$login" ]; then
+            echo "::notice title=Pushing as::$login"
+          else
+            # Some fine-grained tokens cannot read /user. Not a problem — it
+            # only means this check cannot confirm what the push already does.
+            echo "::notice title=Pushing as::the token's account could not be read; \
+            the push still runs as whoever owns the token"
+          fi
+
+      - name: Push to ${{ vars.MIRROR_REPO }}
+        env:
+          MIRROR_REPO: ${{ vars.MIRROR_REPO }}
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
           # The URL is passed straight to `git push` rather than registered with
           # `git remote add`, so the token never lands in .git/config. Actions
           # masks the value itself in the log.

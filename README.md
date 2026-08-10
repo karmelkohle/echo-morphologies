@@ -62,22 +62,30 @@ values exist under *Settings → Secrets and variables → Actions*:
 | Variable | `MIRROR_REPO`  | `owner/name` of the target                                                                 |
 | Secret   | `MIRROR_TOKEN` | fine-grained PAT from the target's account, scoped to that one repo, `Contents: Read and write` |
 
+Because the token belongs to the target's account, that account is what performs
+the push and what the target's history records — the source account never
+appears there. The commits themselves are authored by `Claude
+<noreply@anthropic.com>`, so they carry no account identity either. The one
+thing that *would* carry it is this file: nothing here names the source
+repository, deliberately, since the target may be public. Keep it that way.
+
 The mirror is downstream, not a second place to work: the push is forced, so a
 commit that exists only there is overwritten on the next push here. Forcing is
 unavoidable when the target was populated by copying files in, because its
 history is unrelated to this one and no fast-forward joins them. Don't set these
 two values on the mirror, or the pair will push at each other.
 
-To pull by hand instead, from a clone of the target:
+To pull by hand instead, from a clone of the target — filling in the source
+repository rather than committing it here:
 
 ```sh
-git remote add upstream https://github.com/konstfontaine/echo-morphologies.git
+git remote add upstream https://github.com/<source-owner>/<source-repo>.git
 git fetch upstream
-git reset --hard upstream/claude/audio-pwa-granular-framework-gpbn7c
+git reset --hard upstream/main
 git push --force
 ```
 
-That needs credentials for this repository, since it is private.
+That needs credentials for the source, if it is private.
 
 ## Development
 
