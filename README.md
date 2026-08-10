@@ -31,14 +31,17 @@ capture ─▶ input trim ─▶ granular ─▶ directional bus ─▶ binaural
 `getUserMedia` refuses to run on a plain-http origin, so the phone needs an
 https URL. Two ways:
 
-**GitHub Pages** — push, and `.github/workflows/pages.yml` builds and publishes.
-The workflow turns Pages on for the repository itself the first time it runs.
-Then open the published URL in Safari and use *Share → Add to Home Screen*.
+**GitHub Pages** — `.github/workflows/pages.yml` builds and publishes on every
+push. It needs one manual step first, which no workflow can do for itself:
+*Settings → Pages → Source: **GitHub Actions***. Until that is set the build
+still runs and stays green, and the deploy is skipped with a note in the run
+summary. Once it is set, push (or re-run the workflow) and the URL appears in
+the deploy job. Open it in Safari and use *Share → Add to Home Screen*.
 
-That needs a plan that allows Pages on a *private* repository, which this one
-is. If the deploy fails on the `configure-pages` step, that is what happened —
-either make the repository public, or use the local route below and any static
-host with https for sharing.
+This repository is private, so Pages also needs a plan that allows Pages on
+private repositories. If the setting is not offered, making the repository
+public is the simplest fix; otherwise use the local route below, or any static
+host that serves https.
 
 **Local, over the network** — `npm run dev:https` serves the dev server on the
 LAN with a self-signed certificate. Safari will warn about the certificate; you

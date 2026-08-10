@@ -1,10 +1,20 @@
-name: Deploy to GitHub Pages
+name: Build and deploy
 
-# The app needs an https origin to be testable on a phone — getUserMedia is
-# blocked on plain http, and the service worker will not register either. Pages
-# is the shortest route from a push to a URL Safari will trust.
+# Two jobs in one workflow because they answer different questions.
 #
-# Requires Settings → Pages → Source: "GitHub Actions" to be selected once.
+# `build` is real CI — it typechecks and bundles both the app and the audio
+# worklet, and it must go red when either breaks.
+#
+# `deploy` publishes to Pages, which the app needs because getUserMedia is
+# blocked on plain http and none of this can be tried on a phone without an
+# https origin. Publishing depends on a setting no workflow can flip for
+# itself: *Settings → Pages → Source: GitHub Actions*, one time, by a human.
+# (The API call to create a Pages site is refused to the workflow token, and
+# a private repository additionally needs a plan that allows Pages.)
+#
+# So the Pages steps are allowed to fail without taking CI down with them. Until
+# the setting is on, the build stays green and the deploy is skipped with a
+# note; the moment it is on, the next push publishes.
 
 on:
   push:
@@ -25,6 +35,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      pages_ready: ${{ steps.pages.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -47,20 +59,23 @@ jobs:
           # the worklet path have to be prefixed to match.
           PAGES_BASE: /${{ github.event.repository.name }}/
 
-      - uses: actions/configure-pages@v5
-        with:
-          # Turns Pages on for the repository the first time this runs, instead
-          # of failing until someone visits the settings page. Needs a plan that
-          # allows Pages on a private repository — otherwise make the repository
-          # public, or see the README for the local-https route.
-          enablement: true
+      - id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
 
-      - uses: actions/upload-pages-artifact@v3
+      - if: steps.pages.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
+      - if: steps.pages.outcome != 'success'
+        run: |
+          echo "::notice title=Pages not enabled::The build succeeded and the deploy was skipped. \
+          Turn Pages on under Settings → Pages → Source: GitHub Actions, then re-run this workflow."
+
   deploy:
     needs: build
+    if: needs.build.outputs.pages_ready == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
