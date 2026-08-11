@@ -481,6 +481,19 @@ button.toggle[aria-pressed='true'][data-tone='positive'] {
   color: var(--accent);
 }
 
+/* ── channel test ──────────────────────────────────────────────────────── */
+
+.channel-test {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr 1fr;
+  gap: 8px;
+}
+
+.channel-test .toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── chain ─────────────────────────────────────────────────────────────── */
 
 .chain {

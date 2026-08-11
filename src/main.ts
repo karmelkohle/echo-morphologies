@@ -95,6 +95,24 @@ inputDeviceSelect.addEventListener('change', () => {
   void engine.setInputDevice(value === '' ? null : value)
 })
 
+// ── channel test ──────────────────────────────────────────────────────────
+
+const testButtons: Array<[string, 'left' | 'right' | 'both']> = [
+  ['test-left', 'left'],
+  ['test-both', 'both'],
+  ['test-right', 'right'],
+]
+for (const [id, channel] of testButtons) {
+  requireElement<HTMLButtonElement>(id).addEventListener('click', () => engine.playTestTone(channel))
+}
+
+function renderChannelTest(next: EngineStatus): void {
+  const enabled = next.state === 'running' || next.state === 'interrupted'
+  for (const [id] of testButtons) {
+    requireElement<HTMLButtonElement>(id).disabled = !enabled
+  }
+}
+
 function renderInputDevices(next: EngineStatus): void {
   const devices = next.inputDevices
   if (devices.length === 0) {
@@ -280,6 +298,7 @@ function renderStatus(next: EngineStatus): void {
   headphoneWarning.hidden = stopping
 
   renderInputDevices(next)
+  renderChannelTest(next)
 
   // Route problems outrank ordinary messages: a mono route silently unmakes
   // the whole piece, so it takes over the banner until fixed.
@@ -398,10 +417,15 @@ let frame = 0
 function startAnimation(): void {
   if (frame !== 0) return
   const tick = () => {
-    const now = performance.now()
-    for (const meter of Object.values(meters)) meter.render(now)
-    plot.render()
-    frame = requestAnimationFrame(tick)
+    // The loop must survive any single frame's failure — a dead loop freezes
+    // every meter readout, which reads as the whole engine having stopped.
+    try {
+      const now = performance.now()
+      for (const meter of Object.values(meters)) meter.render(now)
+      plot.render()
+    } finally {
+      frame = requestAnimationFrame(tick)
+    }
   }
   frame = requestAnimationFrame(tick)
 }

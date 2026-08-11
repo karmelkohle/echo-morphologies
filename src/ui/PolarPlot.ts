@@ -61,6 +61,9 @@ export class PolarPlot {
   }
 
   private resize(): void {
+    // A hidden page reports zero width; keep the last real backing store
+    // rather than collapsing to a 1-pixel canvas with a negative plot radius.
+    if (this.canvas.clientWidth === 0) return
     const ratio = window.devicePixelRatio || 1
     const size = Math.max(1, Math.round(this.canvas.clientWidth * ratio))
     if (this.canvas.width !== size || this.canvas.height !== size) {
@@ -88,6 +91,8 @@ export class PolarPlot {
     const cx = size / 2
     const cy = size / 2
     const R = size / 2 - 6 * (window.devicePixelRatio || 1)
+    // Too small to draw meaningfully — and negative radii throw.
+    if (R <= 8) return
 
     ctx.clearRect(0, 0, size, size)
 

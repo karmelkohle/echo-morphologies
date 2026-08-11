@@ -190,6 +190,26 @@ const muted = await snapshot()
 console.log('\nmuted: input peaked at', mutedInputPeak, '· out L settled at', muted.meters['out L'])
 check(mutedInputPeak > -40, `input died while muted (${mutedInputPeak} dB)`)
 check(muted.meters['out L'] === '−∞', `output not silent while muted (${muted.meters['out L']})`)
+
+// ── Channel test under mute: the tone is the ONLY signal, so this measures
+// the stereo separation of the whole output stage in isolation. The buttons
+// live on the config page.
+await page.click('#nav-config')
+await page.click('#test-left')
+await page.click('#nav-play')
+let toneL = -Infinity
+let toneR = -Infinity
+for (const deadline = Date.now() + 1500; Date.now() < deadline; ) {
+  const s = await snapshot()
+  toneL = Math.max(toneL, dbOf(s.meters['out L']))
+  toneR = Math.max(toneR, dbOf(s.meters['out R']))
+  await page.waitForTimeout(50)
+}
+console.log('left-only test tone: L', toneL, 'dB · R', toneR, 'dB')
+check(toneL > -24, `left test tone did not sound (L peaked at ${toneL} dB)`)
+check(toneR === -Infinity, `left test tone leaked into the right ear (R ${toneR} dB)`)
+await page.waitForTimeout(SETTLE_MS)
+
 await page.click('#param-mute')
 await page.click('#param-dryMonitor')
 

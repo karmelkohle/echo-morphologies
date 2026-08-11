@@ -370,6 +370,17 @@ export class AudioEngine {
   }
 
   /**
+   * Route diagnostic: a short tone into one or both output channels, played
+   * through the exact path the app uses (element, session, limiter and all).
+   * Left is 440 Hz, right 660 Hz — a swapped route is as audible as a mono
+   * one. No-op while the engine is idle.
+   */
+  playTestTone(channel: 'left' | 'right' | 'both'): void {
+    const mask = channel === 'left' ? 0b01 : channel === 'right' ? 0b10 : 0b11
+    this.send({ type: 'testTone', mask })
+  }
+
+  /**
    * Swaps the capture to another microphone while the graph keeps running.
    * The choice is remembered for the next start.
    */

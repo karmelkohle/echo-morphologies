@@ -63,6 +63,9 @@ class EngineProcessor extends AudioWorkletProcessor {
       case 'meterInterval':
         this.setMeterInterval(message.ms)
         break
+      case 'testTone':
+        this.core.triggerTestTone(message.mask)
+        break
       case 'hrir':
         try {
           const set = HrirSet.fromParts(message.set)

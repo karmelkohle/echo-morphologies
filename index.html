@@ -92,6 +92,22 @@
           </div>
         </section>
 
+        <section class="panel" aria-labelledby="chtest-heading">
+          <h2 id="chtest-heading">Channel test</h2>
+          <div class="channel-test">
+            <button type="button" id="test-left" class="toggle" disabled>&#9664; left &middot; 440 Hz</button>
+            <button type="button" id="test-both" class="toggle" disabled>both</button>
+            <button type="button" id="test-right" class="toggle" disabled>right &middot; 660 Hz &#9654;</button>
+          </div>
+          <p class="control-hint">
+            Plays a tone through the app's real output path. The low tone must
+            sit only in the LEFT ear, the high tone only in the RIGHT. Hearing
+            both tones in both ears means the route is mono (Bluetooth call
+            mode) &mdash; pick the phone's microphone above. Low on the right
+            means the route is swapped.
+          </p>
+        </section>
+
         <section class="panel" aria-labelledby="chain-heading">
           <h2 id="chain-heading">Signal chain</h2>
           <ol class="chain">

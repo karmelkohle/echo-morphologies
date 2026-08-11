@@ -87,6 +87,13 @@ export class EngineCore implements AudioEngineCore {
   private wetRight = new Float32Array(0)
   private binauralWasActive = true
 
+  /** Channel-test tone state; see {@link triggerTestTone}. */
+  private testToneMask = 0
+  private testToneRemaining = 0
+  private testToneTotal = 0
+  private testTonePhaseL = 0
+  private testTonePhaseR = 0
+
   prepare(cfg: EngineConfig): void {
     this.cfg = { ...cfg }
     const { sampleRate, maxBlockSize } = this.cfg
@@ -132,6 +139,21 @@ export class EngineCore implements AudioEngineCore {
 
   setHrir(set: Parameters<BinauralStage['setHrir']>[0]): void {
     this.binaural.setHrir(set)
+  }
+
+  /**
+   * Fires the route diagnostic: 600 ms of tone into the masked output
+   * channels (bit 0 = left at 440 Hz, bit 1 = right at 660 Hz), injected
+   * after mute and output gain so it sounds regardless of settings, before
+   * the limiter so it cannot surprise anyone's ears. Distinct pitches per
+   * side make a swapped route as audible as a collapsed one.
+   */
+  triggerTestTone(mask: number): void {
+    this.testToneMask = mask & 0b11
+    this.testToneTotal = Math.round(0.6 * this.cfg.sampleRate)
+    this.testToneRemaining = this.testToneTotal
+    this.testTonePhaseL = 0
+    this.testTonePhaseR = 0
   }
 
   setParam(id: number, value: number): void {
@@ -318,6 +340,9 @@ export class EngineCore implements AudioEngineCore {
       left[i] *= gain
       right[i] *= gain
     }
+
+    if (this.testToneRemaining > 0) this.renderTestTone(left, right, n)
+
     this.limiter.process(left, right, n)
 
     this.leftMeter.accumulate(left, n)
@@ -363,6 +388,29 @@ export class EngineCore implements AudioEngineCore {
       }
     }
     return total
+  }
+
+  /** Renders the channel-test tone; −18 dBFS peak, 15 ms raised-cosine fades. */
+  private renderTestTone(left: Float32Array, right: Float32Array, n: number): void {
+    const sr = this.cfg.sampleRate
+    const incL = (2 * Math.PI * 440) / sr
+    const incR = (2 * Math.PI * 660) / sr
+    const fade = Math.max(1, Math.round(0.015 * sr))
+    const amp = 0.125
+
+    for (let i = 0; i < n && this.testToneRemaining > 0; i++, this.testToneRemaining--) {
+      const elapsed = this.testToneTotal - this.testToneRemaining
+      const edge = Math.min(1, elapsed / fade, this.testToneRemaining / fade)
+      const env = amp * 0.5 * (1 - Math.cos(Math.PI * Math.min(1, edge)))
+      if (this.testToneMask & 1) {
+        left[i] += Math.sin(this.testTonePhaseL) * env
+        this.testTonePhaseL += incL
+      }
+      if (this.testToneMask & 2) {
+        right[i] += Math.sin(this.testTonePhaseR) * env
+        this.testTonePhaseR += incR
+      }
+    }
   }
 
   private readonly vizScratch = new Float32Array(64 * 3)

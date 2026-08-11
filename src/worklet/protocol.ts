@@ -20,6 +20,13 @@ export type CommandMessage =
   /** How often to report meters, in milliseconds. 0 stops reporting. */
   | { type: 'meterInterval'; ms: number }
   /**
+   * Route diagnostic: a short enveloped tone straight into the output
+   * channels — 440 Hz left, 660 Hz right — injected after mute and gain so
+   * it sounds regardless of settings, before the limiter so it stays safe.
+   * Mask bit 0 = left, bit 1 = right.
+   */
+  | { type: 'testTone'; mask: number }
+  /**
    * A parsed HRIR set, already resampled to the context rate — the heavy
    * loops happen on the main thread and the arrays travel in the transfer
    * list, so the audio thread only reassembles. `label` is echoed back in the
