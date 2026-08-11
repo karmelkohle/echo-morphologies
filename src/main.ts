@@ -1,17 +1,50 @@
 import './style.css'
 
 import { AudioEngine, type EngineStatus, type MeterSnapshot } from './audio/AudioEngine'
+import {
+  EFFECT_LOCALS,
+  EffectType,
+  GLOBAL_PARAMS,
+  ParamId,
+  SLOT_COUNT,
+  SlotParam,
+  makeSlotParams,
+  slotParamId,
+  type EffectType as EffectTypeT,
+} from './engine/params'
 import { registerServiceWorker } from './pwa/register-sw'
 import { Meter } from './ui/Meter'
-import { buildControls } from './ui/controls'
+import { PolarPlot, SLOT_COLORS, type SlotPlotState } from './ui/PolarPlot'
+import { buildControl } from './ui/controls'
 import { StatusTable } from './ui/status'
 
 /**
- * Application wiring. Holds no audio state of its own — it reflects the engine
- * and forwards gestures to it.
+ * Application wiring: two pages (play / config), controls generated from the
+ * parameter table, and the polar plot fed by the engine's viz reports. Holds
+ * no audio state of its own.
  */
 
 const engine = new AudioEngine()
+
+// ── page routing ──────────────────────────────────────────────────────────
+
+const pagePlay = requireElement<HTMLElement>('page-play')
+const pageConfig = requireElement<HTMLElement>('page-config')
+const navPlay = requireElement<HTMLButtonElement>('nav-play')
+const navConfig = requireElement<HTMLButtonElement>('nav-config')
+
+function showPage(page: 'play' | 'config'): void {
+  document.body.dataset.page = page
+  pagePlay.hidden = page !== 'play'
+  pageConfig.hidden = page !== 'config'
+  navPlay.setAttribute('aria-pressed', String(page === 'play'))
+  navConfig.setAttribute('aria-pressed', String(page === 'config'))
+}
+
+navPlay.addEventListener('click', () => showPage('play'))
+navConfig.addEventListener('click', () => showPage('config'))
+
+// ── shared chrome ─────────────────────────────────────────────────────────
 
 const transport = requireElement<HTMLButtonElement>('transport')
 const stateBadge = requireElement<HTMLDivElement>('state-badge')
@@ -25,10 +58,140 @@ const meters = {
   left: new Meter('out L'),
   right: new Meter('out R'),
 }
-const meterContainer = requireElement<HTMLDivElement>('meters')
-meterContainer.append(meters.input.element, meters.left.element, meters.right.element)
+requireElement<HTMLDivElement>('meters').append(
+  meters.input.element,
+  meters.left.element,
+  meters.right.element,
+)
 
-buildControls(requireElement<HTMLDivElement>('controls'), engine)
+// ── controls host: every set also refreshes the plot state ────────────────
+
+const host = {
+  getParam: (id: number) => engine.getParam(id),
+  setParam: (id: number, value: number) => {
+    engine.setParam(id, value)
+    refreshPlotSlots()
+  },
+}
+
+// Quick controls on the play page; calibration on the config page.
+const byId = new Map(GLOBAL_PARAMS.map((p) => [p.id, p]))
+const quick = requireElement<HTMLDivElement>('quick-controls')
+for (const id of [ParamId.OutputGainDb, ParamId.Mute, ParamId.DryMonitor]) {
+  quick.append(buildControl(byId.get(id)!, host).element)
+}
+const config = requireElement<HTMLDivElement>('config-controls')
+for (const id of [ParamId.InputTrimDb, ParamId.HrirSet]) {
+  config.append(buildControl(byId.get(id)!, host).element)
+}
+
+// ── polar plot (before the slots: their builders push state into it) ──────
+
+const plot = new PolarPlot(requireElement<HTMLCanvasElement>('polar-plot'))
+const legend = requireElement<HTMLParagraphElement>('plot-legend')
+
+// ── effect pipeline slots ─────────────────────────────────────────────────
+
+const SLOT_NAMES = ['A', 'B', 'C']
+const slotsContainer = requireElement<HTMLElement>('slots')
+
+interface SlotSection {
+  effectControls: HTMLDivElement
+  rebuildEffectControls: () => void
+}
+
+const slotSections: SlotSection[] = []
+
+for (let s = 0; s < SLOT_COUNT; s++) {
+  const specs = makeSlotParams(s)
+  const specByLocal = new Map(specs.map((p) => [p.id - slotParamId(s, 0), p]))
+
+  const section = document.createElement('section')
+  section.className = 'panel slot'
+  section.style.setProperty('--slot-color', SLOT_COLORS[s])
+
+  const heading = document.createElement('h2')
+  heading.className = 'slot-head'
+  heading.innerHTML = `<span class="slot-chip"></span>pipeline ${SLOT_NAMES[s]}`
+  section.append(heading)
+
+  const controls = document.createElement('div')
+  controls.className = 'controls'
+  section.append(controls)
+
+  // The effect picker, then the spatial target, then the chosen effect's own
+  // parameters (rebuilt on every effect change).
+  const effectSpec = specByLocal.get(SlotParam.Effect)!
+  const picker = buildControl(effectSpec, {
+    getParam: host.getParam,
+    setParam: (id, value) => {
+      host.setParam(id, value)
+      rebuild()
+    },
+  })
+  controls.append(picker.element)
+
+  const spatial = document.createElement('div')
+  spatial.className = 'controls slot-spatial'
+  for (const local of [
+    SlotParam.WetDb,
+    SlotParam.AzimuthDeg,
+    SlotParam.AzimuthDevDeg,
+    SlotParam.ElevationDeg,
+    SlotParam.ElevationDevDeg,
+  ]) {
+    spatial.append(buildControl(specByLocal.get(local)!, host).element)
+  }
+  controls.append(spatial)
+
+  const effectControls = document.createElement('div')
+  effectControls.className = 'controls slot-effect'
+  controls.append(effectControls)
+
+  const rebuild = () => {
+    effectControls.replaceChildren()
+    const effect = Math.round(engine.getParam(slotParamId(s, SlotParam.Effect))) as EffectTypeT
+    spatial.hidden = effect === EffectType.Off
+    for (const local of EFFECT_LOCALS[effect] ?? []) {
+      const spec = specByLocal.get(local)
+      if (spec) effectControls.append(buildControl(spec, host).element)
+    }
+    refreshPlotSlots()
+  }
+  rebuild()
+
+  slotSections.push({ effectControls, rebuildEffectControls: rebuild })
+  slotsContainer.append(section)
+}
+
+// ── polar plot state ──────────────────────────────────────────────────────
+
+function refreshPlotSlots(): void {
+  const states: SlotPlotState[] = []
+  const legendBits: string[] = []
+  for (let s = 0; s < SLOT_COUNT; s++) {
+    const effect = Math.round(engine.getParam(slotParamId(s, SlotParam.Effect))) as EffectTypeT
+    const active = effect !== EffectType.Off
+    states.push({
+      active,
+      azimuthDeg: engine.getParam(slotParamId(s, SlotParam.AzimuthDeg)),
+      azimuthDevDeg: engine.getParam(slotParamId(s, SlotParam.AzimuthDevDeg)),
+      elevationDeg: engine.getParam(slotParamId(s, SlotParam.ElevationDeg)),
+      elevationDevDeg: engine.getParam(slotParamId(s, SlotParam.ElevationDevDeg)),
+    })
+    if (active) {
+      legendBits.push(
+        `<span class="legend-item" style="--slot-color:${SLOT_COLORS[s]}">${SLOT_NAMES[s]}</span>`,
+      )
+    }
+  }
+  plot.setSlots(states)
+  legend.innerHTML = legendBits.length
+    ? `sounding: ${legendBits.join(' ')}`
+    : 'no pipeline active — pick an effect below'
+}
+
+refreshPlotSlots()
 
 // ── transport ─────────────────────────────────────────────────────────────
 
@@ -44,8 +207,7 @@ transport.addEventListener('click', () => {
 
   action
     .catch(() => {
-      // The failure is already reflected in the status banner; swallowing it
-      // here just keeps it out of the console as an unhandled rejection.
+      // Already reflected in the status banner; this keeps the console quiet.
     })
     .finally(() => {
       busy = false
@@ -61,6 +223,8 @@ engine.onStatus = (next) => {
     stopAnimation()
     for (const meter of Object.values(meters)) meter.clear()
     renderMeters(null)
+    plot.setViz([])
+    plot.render()
   } else {
     startAnimation()
   }
@@ -71,6 +235,7 @@ engine.onMeters = (snapshot) => {
   meters.input.setLevels(snapshot.inputPeak, snapshot.inputRms, now)
   meters.left.setLevels(snapshot.leftPeak, snapshot.leftRms, now)
   meters.right.setLevels(snapshot.rightPeak, snapshot.rightRms, now)
+  plot.setViz(snapshot.viz)
   renderMeters(snapshot)
 }
 
@@ -154,7 +319,7 @@ function renderMeters(snapshot: MeterSnapshot | null): void {
     status.set('clock gaps', '—')
     status.set('input clipping', '—')
     status.set('limiter', '—')
-    status.set('grains sounding', '—')
+    status.set('voices sounding', '—')
     return
   }
 
@@ -181,7 +346,7 @@ function renderMeters(snapshot: MeterSnapshot | null): void {
     snapshot.limiterReductionDb > 0.05 ? `−${snapshot.limiterReductionDb.toFixed(1)} dB` : 'inactive',
     snapshot.limiterReductionDb > 0.05 ? 'warn' : 'neutral',
   )
-  status.set('grains sounding', String(Math.round(snapshot.activeGrains)))
+  status.set('voices sounding', String(Math.round(snapshot.activeVoices)))
 }
 
 // ── animation ─────────────────────────────────────────────────────────────
@@ -193,6 +358,7 @@ function startAnimation(): void {
   const tick = () => {
     const now = performance.now()
     for (const meter of Object.values(meters)) meter.render(now)
+    plot.render()
     frame = requestAnimationFrame(tick)
   }
   frame = requestAnimationFrame(tick)
@@ -237,4 +403,5 @@ function displayMode(): string {
 
 renderStatus(engine.getStatus())
 renderMeters(null)
+plot.render()
 void registerServiceWorker()

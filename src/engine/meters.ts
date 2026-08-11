@@ -18,8 +18,8 @@ export const MeterSlot = {
   LimiterReductionDb: 6,
   /** Capture samples at or above 0 dBFS since the last read. */
   InputClipCount: 7,
-  /** Grains sounding right now. */
-  ActiveGrains: 8,
+  /** Voices sounding right now, across every pipeline (grains, repeats, …). */
+  ActiveVoices: 8,
 } as const
 
 export const METER_SLOT_COUNT = 9

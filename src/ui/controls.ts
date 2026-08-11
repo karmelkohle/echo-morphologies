@@ -1,55 +1,30 @@
-import { PARAMS, PARAM_GROUPS, type ParamId, type ParamSpec } from '../engine/params'
+import type { ParamSpec } from '../engine/params'
 
 /**
- * Builds the control surface straight from the parameter table.
- *
- * Nothing here knows what a gain or a grain is. Add an entry to `PARAMS` and
- * its control appears in the right section with the right range, step and
- * formatting, already wired to the engine.
+ * Single-control builders, driven entirely by the parameter table. Nothing
+ * here knows what a gain or a grain is; main.ts decides which specs appear
+ * where, these functions decide what a spec looks like.
  */
 
 export interface ControlHost {
-  getParam(id: ParamId): number
-  setParam(id: ParamId, value: number): void
+  getParam(id: number): number
+  setParam(id: number, value: number): void
 }
 
-export interface ControlSurface {
-  /** Re-reads every value from the host, e.g. after a preset load. */
-  refresh(): void
-}
-
-export function buildControls(container: HTMLElement, host: ControlHost): ControlSurface {
-  const refreshers: Array<() => void> = []
-
-  for (const group of PARAM_GROUPS) {
-    const specs = PARAMS.filter((p) => p.group === group.key)
-    if (specs.length === 0) continue
-
-    const heading = document.createElement('h3')
-    heading.className = 'control-group'
-    heading.textContent = group.title
-    container.append(heading)
-
-    for (const spec of specs) {
-      const built =
-        spec.kind === 'toggle'
-          ? buildToggle(spec, host)
-          : spec.kind === 'enum'
-            ? buildSelect(spec, host)
-            : buildFader(spec, host)
-      container.append(built.element)
-      refreshers.push(built.refresh)
-    }
-  }
-
-  return {
-    refresh: () => refreshers.forEach((fn) => fn()),
-  }
-}
-
-interface BuiltControl {
+export interface BuiltControl {
   element: HTMLElement
   refresh: () => void
+}
+
+export function buildControl(spec: ParamSpec, host: ControlHost): BuiltControl {
+  switch (spec.kind) {
+    case 'toggle':
+      return buildToggle(spec, host)
+    case 'enum':
+      return buildSelect(spec, host)
+    default:
+      return buildFader(spec, host)
+  }
 }
 
 function controlHead(spec: ParamSpec): { head: HTMLDivElement; value: HTMLSpanElement } {

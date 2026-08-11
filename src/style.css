@@ -25,6 +25,11 @@
   box-sizing: border-box;
 }
 
+/* The hidden attribute must win over any display the classes set. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -52,6 +57,110 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap);
+}
+
+/* ── pages ─────────────────────────────────────────────────────────────── */
+
+.pages {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+.page-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 14px;
+  background: transparent;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.page-tab[aria-pressed='true'] {
+  background: var(--accent-deep);
+  color: #04231f;
+  font-weight: 650;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* ── polar plot ────────────────────────────────────────────────────────── */
+
+.plot-wrap {
+  position: relative;
+  width: 100%;
+}
+
+#polar-plot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #10151d 0%, #0a0d12 78%);
+}
+
+.plot-legend {
+  margin: 10px 0 0;
+  font-size: 0.74rem;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.legend-item {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--slot-color) 18%, transparent);
+  color: var(--slot-color);
+  font-weight: 650;
+}
+
+/* ── pipeline slots ────────────────────────────────────────────────────── */
+
+#slots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.panel.slot {
+  border-left: 3px solid var(--slot-color);
+}
+
+.slot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slot-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--slot-color);
+}
+
+.slot-spatial,
+.slot-effect {
+  border-top: 1px dashed rgb(31 39 51 / 80%);
+  padding-top: 14px;
+}
+
+.slot-effect:empty {
+  display: none;
+  border: 0;
+  padding: 0;
 }
 
 /* ── masthead ──────────────────────────────────────────────────────────── */

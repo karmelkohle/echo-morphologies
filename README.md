@@ -7,30 +7,38 @@ walking through a city means hearing a re-imagined version of it.
 ## What runs today
 
 ```
-capture ─▶ input trim ─▶ granular ─▶ directional bus ─▶ binaural ─▶ output gain ─▶ limiter ─▶ ears
-   mono       smoothed   grain cloud     8 lanes       HRIR conv.     smoothed     −1 dBFS    stereo
+                 ┌─▶ pipeline A: effect ─▶ 4 lanes ─┐
+capture ─▶ trim ─┼─▶ pipeline B: effect ─▶ 4 lanes ─┼─▶ binaural ─▶ gain ─▶ limiter ─▶ ears
+   mono          └─▶ pipeline C: effect ─▶ 4 lanes ─┘   HRIR conv.
 ```
 
-- Mono capture with echo cancellation, noise suppression and auto gain all
-  switched off.
-- **Granular delay** — the spatdsp `msf::Granular` design: a rolling ring
-  buffer (the delay line and the grain source at once), sample-accurate onset
-  scheduling (metronomic or Poisson), four grain windows, per-grain scatter of
-  length, pitch, level and read delay, reversed grains, and round-robin
-  dealing onto eight directional lanes. Every grain draws its direction as
-  target azimuth/elevation ± spread.
-- **Binaural rendering** — each lane convolves with the HRIR pair measured
-  nearest its direction and crossfades on change. Two measured sets ship,
-  converted from the SOFA sources in `resources/hrtfs/`: KU100 (Köln, 2 702
-  positions, default) and FABIAN (11 950 positions, selectable).
-- The Granular toggle A/Bs the entire wet path against the dry microphone
-  through a short fade; bypassed, the chain is provably dry.
-- Input trim and output gain, both sample-smoothed, plus a click-free mute,
-  and a safety limiter at −1 dBFS that cannot be switched off.
-- Meters with peak-hold, a grains-sounding counter, and a status panel that
-  reports the numbers you need to trust the run: sample rates, latency, render
-  rate against realtime, render-clock gaps, clipped samples, limiter activity,
-  which HRTF set is actually rendering.
+- **Three parallel pipelines**, each running one effect on the same capture
+  and aiming it at its own spatial target (azimuth/elevation ± spread, own
+  level) — granular into the left hemisphere beside additive pads into the
+  right, and so on.
+- **Four effects**, one class each under `src/engine/effects/` — add a file
+  and a params entry and a new one appears in the picker:
+  - *Granular delay* — the spatdsp `msf::Granular` design: rolling ring
+    buffer, sample-accurate onsets (metronomic/Poisson), four windows,
+    per-grain scatter of length/pitch/level/read-delay, reversed grains.
+  - *Echo delay* — repeats as separate taps, each at its own drawn direction,
+    dulled progressively like a room.
+  - *FDN reverb* — spatdsp's Jot-family network at 8 lines: Householder
+    feedback, exact T60, HF damping, mode-breaking modulation; the tail
+    arrives as decorrelated lanes scattered around the target.
+  - *Additive pads* (experimental) — a pitch tracker follows the capture's
+    fundamental; an oscillator bank lays an attack/release-gated pad there,
+    with partial count, spacing (harmonic → stretched) and odd/even balance,
+    the spectrum re-scattering spatially at each retrigger.
+- **Binaural rendering** — all twelve lanes convolve with the HRIR measured
+  nearest their direction (KU100 Köln default, FABIAN selectable), crossfaded
+  on change.
+- **Two-page interface** — *play*: transport, meters, output level, dry-monitor
+  A/B, a top-down polar field (targets, spread zones, live voices glowing by
+  level) and the three pipeline cards; *config*: calibration, signal chain,
+  the full status table.
+- Safety limiter at −1 dBFS that cannot be switched off; meters, voice
+  counter, and status rows for everything worth distrusting.
 - Installable and fully offline-capable.
 
 ## Getting it onto the phone

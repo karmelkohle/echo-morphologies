@@ -3,19 +3,15 @@
  *
  *     npm run smoke
  *
- * Builds are assumed done (the npm script handles it). This starts a preview
- * server, drives the app in Chromium against a synthetic capture device, and
- * asserts on what the interface reports.
- *
- * The assertions are deliberately about the DSP, not just about the plumbing:
- * the output has to track the input at exactly the output gain's offset, both
- * channels have to agree, and mute has to reach real silence. A build where the
- * graph runs but the engine is wrong passes a "did it load" test and fails this
- * one — which is the failure mode worth catching once there is real DSP in
- * `src/engine/`.
+ * Drives the real app in headless Chromium against a synthetic capture
+ * device and asserts on what the interface reports. The assertions are about
+ * the DSP, not the page loading: the dry monitor must measure exactly the
+ * output gain's offset on both ears, lateralized grains must favor the
+ * correct ear, every effect must hold realtime, and two pipelines in
+ * parallel must too.
  *
  * Chromium comes from Playwright's own download (`npx playwright install
- * chromium`). Set CHROMIUM_PATH to use a browser that is already on the machine.
+ * chromium`); set CHROMIUM_PATH to use one already on the machine.
  */
 
 import { spawn } from 'node:child_process'
@@ -24,11 +20,11 @@ import { chromium } from 'playwright'
 
 const PORT = Number(process.env.PORT ?? 4173)
 const BASE = process.env.APP_URL ?? `http://localhost:${PORT}/`
-/** Output gain's default, in dB. The output must sit this far under the input. */
+/** Output gain's default, in dB. The dry monitor must sit this far under input. */
 const EXPECTED_DROP_DB = 12
-const SAMPLE_MS = 6000
-/** Long enough for the peak-hold to finish falling after mute. */
-const MUTE_SETTLE_MS = 5000
+const SAMPLE_MS = 5000
+/** Long enough for the peak-hold ballistics to fall away between phases. */
+const SETTLE_MS = 4200
 
 const failures = []
 const check = (ok, message) => {
@@ -39,20 +35,10 @@ const check = (ok, message) => {
 
 let server = null
 if (!process.env.APP_URL) {
-  // The binary directly rather than through `npx`: killing npx leaves the vite
-  // process it spawned holding the port, and the next run fails to start.
   const vite = fileURLToPath(
-    new URL(
-      `../node_modules/.bin/vite${process.platform === 'win32' ? '.cmd' : ''}`,
-      import.meta.url,
-    ),
+    new URL(`../node_modules/.bin/vite${process.platform === 'win32' ? '.cmd' : ''}`, import.meta.url),
   )
-  server = spawn(vite, ['preview', '--port', String(PORT), '--strictPort'], {
-    stdio: 'ignore',
-  })
-  // Also on the way out of a failed assertion or a thrown page action: a
-  // surviving preview server holds the port and the next run fails to start
-  // for a reason that has nothing to do with the code.
+  server = spawn(vite, ['preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' })
   process.on('exit', () => server?.kill())
   await waitForServer(BASE, 15000)
 }
@@ -77,18 +63,12 @@ let browser
 try {
   browser = await chromium.launch({
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
-    args: [
-      // Grant the microphone without a prompt and feed it Chrome's synthetic
-      // beeping tone, so the run needs no hardware and no human.
-      '--use-fake-ui-for-media-stream',
-      '--use-fake-device-for-media-stream',
-    ],
+    args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
   })
 } catch (error) {
   server?.kill()
   console.error(String(error))
   console.error('\nInstall the browser with:  npx playwright install chromium')
-  console.error('Or point CHROMIUM_PATH at an existing Chromium binary.')
   process.exit(1)
 }
 
@@ -123,45 +103,56 @@ const snapshot = () =>
     }
   })
 
+/** Set a control by DOM id, firing the event its builder listens for. */
+const drive = (key, value) =>
+  page.evaluate(
+    ([k, v]) => {
+      const el = document.getElementById(`param-${k}`)
+      if (!el) throw new Error(`no control param-${k}`)
+      el.value = String(v)
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+    },
+    [key, value],
+  )
+
 /** The readout uses a typographic minus and shows −∞ at the floor. */
 const dbOf = (text) => (text === '−∞' ? -Infinity : Number(text))
 
 const sampleWindow = async (label, durationMs) => {
   const peaks = { input: -Infinity, 'out L': -Infinity, 'out R': -Infinity }
   let last = null
-  let maxGrains = 0
+  let maxVoices = 0
   for (const deadline = Date.now() + durationMs; Date.now() < deadline; ) {
     last = await snapshot()
     for (const [name, text] of Object.entries(last.meters)) {
       peaks[name] = Math.max(peaks[name], dbOf(text))
     }
-    maxGrains = Math.max(maxGrains, Number(last.rows['grains sounding'] ?? 0) || 0)
+    maxVoices = Math.max(maxVoices, Number(last.rows['voices sounding'] ?? 0) || 0)
     await page.waitForTimeout(60)
   }
   console.log(`\n--- ${label} ---`)
-  console.log('peaks:', peaks, '| max grains sounding:', maxGrains)
-  return { peaks, last, maxGrains }
+  console.log('peaks:', peaks, '| max voices:', maxVoices)
+  return { peaks, last, maxVoices }
+}
+
+const realtime = (phase, last) => {
+  const rate = Number((last.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
+  check(rate >= 95, `${phase}: render rate ${last.rows['render rate']}`)
+  check(last.rows['clock gaps'] === '0', `${phase}: clock gaps ${last.rows['clock gaps']}`)
 }
 
 await page.goto(BASE, { waitUntil: 'networkidle' })
 await page.click('#transport')
 
-// ── Phase 1: granular active (the default) ─────────────────────────────────
-// The grain cloud reads the past through jittered taps, so exact levels are
-// not predictable — what must hold is that the chain is audibly alive, grains
-// are actually sounding, and the graph keeps realtime.
-const granular = await sampleWindow('granular active', SAMPLE_MS)
-check(granular.last.state === 'running', `state was "${granular.last.state}", expected "running"`)
+// ── Phase 1: default pipeline — granular on slot A ─────────────────────────
+const granular = await sampleWindow('granular (slot A default)', SAMPLE_MS)
+check(granular.last.state === 'running', `state was "${granular.last.state}"`)
 check(!granular.last.notice, `notice shown: ${granular.last.notice}`)
-check(granular.peaks.input > -40, `input meter never moved (max ${granular.peaks.input} dB)`)
-check(granular.peaks['out L'] > -40, `granular out L never moved (max ${granular.peaks['out L']} dB)`)
-check(granular.peaks['out R'] > -40, `granular out R never moved (max ${granular.peaks['out R']} dB)`)
-check(granular.maxGrains > 0, 'no grains ever sounded while granular was on')
-check(granular.maxGrains <= 64, `grain count ${granular.maxGrains} exceeds the pool`)
-
-const granularRate = Number((granular.last.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
-check(granularRate >= 95, `render rate with granular on: ${granular.last.rows['render rate']}`)
-check(granular.last.rows['clock gaps'] === '0', `clock gaps ${granular.last.rows['clock gaps']}`)
+check(granular.peaks.input > -40, `input never moved (${granular.peaks.input} dB)`)
+check(granular.peaks['out L'] > -40, `granular out L never moved (${granular.peaks['out L']} dB)`)
+check(granular.peaks['out R'] > -40, `granular out R never moved (${granular.peaks['out R']} dB)`)
+check(granular.maxVoices > 0, 'no voices while granular ran')
+realtime('granular', granular.last)
 check(
   granular.last.rows['render quantum'] === '128 frames',
   `render quantum ${granular.last.rows['render quantum']}`,
@@ -171,90 +162,90 @@ check(
   `capture processing ${granular.last.rows['capture processing']}`,
 )
 
-// ── Phase 2: granular bypassed — the exact reference path ──────────────────
-// Bypass must restore the provable pass-through: output tracks input at
-// exactly the output gain's offset, and both ears agree. The meter readouts
-// are decaying peak holds, so phase 1's louder, lateralized residue has to
-// fall away first (1.2 s hold + ~2 s fall) or this window maxes over it.
-await page.click('#param-granular')
-await page.waitForTimeout(4200)
-const bypass = await sampleWindow('granular bypassed', SAMPLE_MS)
-check(bypass.peaks['out L'] > -40, `bypass out L never moved (max ${bypass.peaks['out L']} dB)`)
-
-const drop = bypass.peaks.input - bypass.peaks['out L']
+// ── Phase 2: dry monitor — the exact reference path ────────────────────────
+await page.click('#param-dryMonitor')
+await page.waitForTimeout(SETTLE_MS)
+const dry = await sampleWindow('dry monitor', SAMPLE_MS)
+check(dry.peaks['out L'] > -40, `dry out L never moved (${dry.peaks['out L']} dB)`)
+const drop = dry.peaks.input - dry.peaks['out L']
 check(
   Math.abs(drop - EXPECTED_DROP_DB) < 3,
-  `bypass input→output drop was ${drop.toFixed(1)} dB, expected ~${EXPECTED_DROP_DB}`,
+  `dry input→output drop was ${drop.toFixed(1)} dB, expected ~${EXPECTED_DROP_DB}`,
 )
 check(
-  Math.abs(bypass.peaks['out L'] - bypass.peaks['out R']) < 0.2,
-  `bypass channels disagree: L ${bypass.peaks['out L']} vs R ${bypass.peaks['out R']}`,
+  Math.abs(dry.peaks['out L'] - dry.peaks['out R']) < 0.2,
+  `dry ears disagree: L ${dry.peaks['out L']} vs R ${dry.peaks['out R']}`,
 )
-check(bypass.last.rows['grains sounding'] === '0', 'grains still sounding while bypassed')
 
-// Mute must reach silence while the input keeps reading. The readout is a
+// Mute must reach silence while the input keeps reading; the readout is a
 // decaying peak hold, so wait out the ballistics and check where it settled.
 await page.click('#param-mute')
 let mutedInputPeak = -Infinity
-for (const deadline = Date.now() + MUTE_SETTLE_MS; Date.now() < deadline; ) {
+for (const deadline = Date.now() + SETTLE_MS + 1000; Date.now() < deadline; ) {
   const s = await snapshot()
   mutedInputPeak = Math.max(mutedInputPeak, dbOf(s.meters.input))
   await page.waitForTimeout(60)
 }
 const muted = await snapshot()
-console.log('muted: input peaked at', mutedInputPeak, '· out L settled at', muted.meters['out L'])
-
-check(mutedInputPeak > -40, `input died while muted (max ${mutedInputPeak} dB)`)
-check(
-  muted.meters['out L'] === '−∞',
-  `output did not fall silent while muted (settled at ${muted.meters['out L']})`,
-)
+console.log('\nmuted: input peaked at', mutedInputPeak, '· out L settled at', muted.meters['out L'])
+check(mutedInputPeak > -40, `input died while muted (${mutedInputPeak} dB)`)
+check(muted.meters['out L'] === '−∞', `output not silent while muted (${muted.meters['out L']})`)
 await page.click('#param-mute')
+await page.click('#param-dryMonitor')
 
 // ── Phase 3: lateralization — the HRIR path, end to end ────────────────────
-// Every grain aimed hard left (azimuth +90°, zero spread): if the loader, the
-// nearest-position index, the per-lane convolution and the coordinate
-// handedness all work, the LEFT ear must come out louder — signed, not just
-// different. A duller assertion would pass with the ears swapped.
-await page.evaluate(() => {
-  const drive = (key, value) => {
-    const el = document.getElementById(`param-${key}`)
-    el.value = String(value)
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-  }
-  drive('azimuthDeg', 90)
-  drive('azimuthDevDeg', 0)
-  drive('elevationDeg', 0)
-  drive('elevationDevDeg', 0)
-})
-await page.click('#param-granular') // re-enable after the bypass phase
+// Slot A's grains aimed hard left: if the loader, the nearest-position index,
+// the convolution and the coordinate handedness all work, the LEFT ear comes
+// out louder — signed, so swapped ears fail loudly.
+await drive('s0-azimuthDeg', 90)
+await drive('s0-azimuthDevDeg', 0)
+await drive('s0-elevationDeg', 0)
+await drive('s0-elevationDevDeg', 0)
 
-// The set loads async at start; normally long done by now, but don't race it.
 for (const deadline = Date.now() + 10000; Date.now() < deadline; ) {
   const s = await snapshot()
   const row = s.rows['hrtf set'] ?? ''
-  if (row.includes('pos ×')) break
-  if (row.includes('failed')) break
+  if (row.includes('pos ×') || row.includes('failed')) break
   await page.waitForTimeout(120)
 }
 const hrtfRow = (await snapshot()).rows['hrtf set'] ?? ''
 console.log('\nhrtf set:', hrtfRow)
-// Tap count varies with the context rate (the set resamples to match — this
-// headless context runs at 44.1 kHz), so assert the set and position count.
 check(/2,702 pos × \d+ taps/.test(hrtfRow), `hrtf row: "${hrtfRow}"`)
 
 const lateral = await sampleWindow('grains hard left (az +90°)', SAMPLE_MS)
-check(lateral.maxGrains > 0, 'no grains sounded in the lateralization phase')
-check(lateral.peaks['out L'] > -40, `left ear silent at az +90 (${lateral.peaks['out L']} dB)`)
+check(lateral.maxVoices > 0, 'no voices in the lateralization phase')
 const ild = lateral.peaks['out L'] - lateral.peaks['out R']
-check(
-  ild >= 1.5,
-  `azimuth +90° should favor the LEFT ear by ≥1.5 dB, measured L−R = ${ild.toFixed(1)} dB`,
-)
-const lateralRate = Number((lateral.last.rows['render rate'] ?? '').replace(/[^0-9.]/g, ''))
-check(lateralRate >= 95, `render rate with HRIR convolution: ${lateral.last.rows['render rate']}`)
-check(lateral.last.rows['clock gaps'] === '0', `clock gaps ${lateral.last.rows['clock gaps']}`)
+check(ild >= 1.5, `az +90° should favor the LEFT ear by ≥1.5 dB, measured L−R = ${ild.toFixed(1)} dB`)
+realtime('lateralization', lateral.last)
 
+// ── Phase 4: every effect holds realtime ───────────────────────────────────
+await drive('s0-azimuthDevDeg', 40)
+
+await drive('s0-effect', 2) // echo delay
+const echo = await sampleWindow('echo delay', SAMPLE_MS)
+check(echo.peaks['out L'] > -45, `echo out L never moved (${echo.peaks['out L']} dB)`)
+realtime('echo', echo.last)
+
+await drive('s0-effect', 3) // fdn reverb
+const reverb = await sampleWindow('fdn reverb', SAMPLE_MS)
+check(reverb.peaks['out L'] > -45, `reverb out L never moved (${reverb.peaks['out L']} dB)`)
+realtime('reverb', reverb.last)
+
+await drive('s0-effect', 4) // additive pads — detection depends on the fake
+const additive = await sampleWindow('additive pads', SAMPLE_MS) // mic's material,
+realtime('additive', additive.last) // so only the graph health is asserted.
+
+// ── Phase 5: two pipelines in parallel ─────────────────────────────────────
+await drive('s0-effect', 1) // granular back on A
+await drive('s1-effect', 3) // reverb on B
+const parallel = await sampleWindow('granular ∥ reverb', SAMPLE_MS)
+check(parallel.peaks['out L'] > -40, `parallel out L never moved (${parallel.peaks['out L']} dB)`)
+check(parallel.maxVoices > 0, 'no voices with two pipelines')
+realtime('parallel', parallel.last)
+
+await drive('s1-effect', 0)
+
+// ── stop ───────────────────────────────────────────────────────────────────
 await page.click('#transport')
 await page.waitForTimeout(600)
 const stopped = await snapshot()

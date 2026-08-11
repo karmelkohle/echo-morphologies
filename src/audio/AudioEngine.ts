@@ -1,6 +1,6 @@
 import { HrirSet } from '../engine/hrir/HrirSet'
 import { METER_SLOT_COUNT, MeterSlot } from '../engine/meters'
-import { HRIR_SETS, PARAMS, ParamId } from '../engine/params'
+import { HRIR_SETS, ParamId, defaultParamValues } from '../engine/params'
 import { PROCESSOR_NAME, type CommandMessage, type StatusMessage } from '../worklet/protocol'
 import {
   AudioPermissionError,
@@ -59,7 +59,9 @@ export interface MeterSnapshot {
   rightRms: number
   limiterReductionDb: number
   inputClipCount: number
-  activeGrains: number
+  activeVoices: number
+  /** (slot, azimuthDeg, elevationDeg, level) quads for the polar plot. */
+  viz: number[]
   /** Total render blocks since the engine started. */
   blocks: number
   /** Render-clock discontinuities since the engine started. */
@@ -87,7 +89,7 @@ export class AudioEngine {
   private node: AudioWorkletNode | null = null
 
   private readonly wakeLock = new ScreenWakeLock()
-  private readonly values = new Map<number, number>(PARAMS.map((p) => [p.id, p.default]))
+  private readonly values = defaultParamValues()
 
   /**
    * Anchor for the render-rate measurement. Reports arrive ~30 times a second
@@ -127,7 +129,7 @@ export class AudioEngine {
     return { ...this.status }
   }
 
-  getParam(id: ParamId): number {
+  getParam(id: number): number {
     return this.values.get(id) ?? 0
   }
 
@@ -136,7 +138,7 @@ export class AudioEngine {
    * stopped are applied when it next starts, so the interface never has to
    * care about ordering.
    */
-  setParam(id: ParamId, value: number): void {
+  setParam(id: number, value: number): void {
     this.values.set(id, value)
     this.send({ type: 'param', id, value })
     // The set choice is host business: the engine cannot fetch.
@@ -350,7 +352,8 @@ export class AudioEngine {
       rightRms: values[MeterSlot.OutputRightRms],
       limiterReductionDb: values[MeterSlot.LimiterReductionDb],
       inputClipCount: values[MeterSlot.InputClipCount],
-      activeGrains: values[MeterSlot.ActiveGrains],
+      activeVoices: values[MeterSlot.ActiveVoices],
+      viz: message.viz,
       blocks: message.blocks,
       clockGaps: message.clockGaps,
       renderRatio: this.renderRatio,

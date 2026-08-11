@@ -1,39 +1,25 @@
 import type { DirectionalBus } from '../DirectionalBus'
 import { Rng } from '../dsp/Rng'
 import { clamp, dbToGain } from '../dsp/math'
-import type { EngineConfig, Stage } from '../types'
+import { SlotParam } from '../params'
+import type { EngineConfig } from '../types'
+import { SpatialTarget, type SpatialEffect } from './SpatialEffect'
 
 /**
- * Granular re-composition of the captured stream — a TypeScript port of the
- * spatdsp design (`msf::Granular` + `GranularExpander`), kept close enough
- * that figures and behavior transfer between the two codebases:
+ * Granular re-composition of the captured stream — the spatdsp design
+ * (`msf::Granular` + `GranularExpander`) as a pipeline effect:
  *
- * - Rolling capture ring buffer; grains read *the past* through an
- *   interpolated tap, so the buffer is the delay line and the grain source
- *   at once. The seam guard in {@link read} matches msf exactly.
- * - Sample-accurate onset scheduling: a countdown in samples places each
- *   onset at its true in-block offset instead of quantizing to block edges.
- *   Sync (metronomic, sr/density) and Poisson (exponential inter-onset,
- *   seeded) schedulers, as in msf.
- * - Per-grain parameter draws at spawn: length, pitch and read delay each
- *   jitter around their base by a deviation range — msf's DeviationParam
- *   paradigm applied per grain (uniform law).
- * - Each grain draws a direction (target azimuth/elevation ± deviation) and
- *   is dealt onto a lane round-robin (msf::LaneRotor). The lane's direction
- *   is set to the grain's at spawn, so the binaural stage renders each grain
- *   stream from its own place — msf's `process_lanes` model on the
- *   DirectionalBus.
- * - Reversed grains store a negative playback rate; the tap then walks deeper
- *   into the past, msf's exact mechanism.
+ * - Rolling capture ring; grains read the past through a seam-guarded
+ *   interpolated tap. The ring is the delay line and the grain source at once.
+ * - Sample-accurate onset scheduling, Sync and Poisson.
+ * - Per-grain deviation draws (length, pitch, level, read delay) from the
+ *   bit-compatible LCG; reversed grains as negative playback rates.
+ * - Round-robin lane dealing (msf::LaneRotor); each grain draws its direction
+ *   from the slot's SpatialTarget at spawn and stamps it on its lane.
  *
- * Differences from msf, both deliberate:
- * - An explicit read-delay parameter (base ± deviation) positions the tap
- *   behind realtime; msf's non-frozen mode always reads just behind the head.
- * - Freeze/loop, pitch quantization and the structured jitter laws are not
- *   ported yet — they layer onto this without moving anything.
- *
- * Realtime rules hold: everything is sized in `prepare()`, `process()`
- * allocates nothing.
+ * Extension over msf, as before: the explicit read-delay (base ± scatter)
+ * that places the tap behind realtime. Freeze/loop, pitch quantization and
+ * the structured jitter laws still layer on later.
  */
 
 export const GrainEnvShape = {
@@ -88,20 +74,22 @@ class Grain {
   pitch = 1
   gain = 1
   env: GrainEnvShape = GrainEnvShape.Hann
+  /** Where this grain sounds — kept for the polar plot. */
+  azimuthDeg = 0
+  elevationDeg = 0
 }
 
 const MAX_GRAINS = 64
 /** Ring allocation ceiling; the buffer-size parameter selects a window of it. */
 const MAX_BUFFER_SEC = 20
 
-export class GranularStage implements Stage {
-  // ── parameters (set from EngineCore, read at spawn time) ─────────────────
+export class GranularDelay implements SpatialEffect {
+  // ── parameters (read at spawn time) ──────────────────────────────────────
   bufferSec = 8
   delayMs = 250
   delayDevMs = 120
   density = 25
   lengthMs = 90
-  /** Relative jitter 0..1 on the grain length. */
   lengthJitter = 0.35
   pitchSemis = 0
   pitchDevSemis = 0
@@ -110,11 +98,6 @@ export class GranularStage implements Stage {
   scheduler: GrainScheduler = GrainScheduler.Sync
   /** Per-grain level scatter below 0 dB, matching msf's gain jitter. */
   gainDevDb = 1.5
-  // Direction the cloud is composed around, and how far grains stray from it.
-  azimuthDeg = 0
-  azimuthDevDeg = 40
-  elevationDeg = 0
-  elevationDevDeg = 15
 
   // ── state ────────────────────────────────────────────────────────────────
   private sampleRate = 48000
@@ -124,9 +107,18 @@ export class GranularStage implements Stage {
   private readonly grains: Grain[] = []
   private spawnCountdown = 0
   private laneSeq = 0
-  private readonly rng = new Rng()
-  private readonly schedRng = new Rng()
-  private seedBase = 0xc0ffee
+  private readonly rng: Rng
+  private readonly schedRng: Rng
+  private readonly seedBase: number
+
+  constructor(
+    private readonly target: SpatialTarget,
+    seed: number,
+  ) {
+    this.seedBase = seed >>> 0 || 0xc0ffee
+    this.rng = new Rng(this.seedBase)
+    this.schedRng = new Rng(this.seedBase ^ 0x5c4ed)
+  }
 
   prepare(cfg: EngineConfig): void {
     this.sampleRate = cfg.sampleRate
@@ -134,7 +126,6 @@ export class GranularStage implements Stage {
     this.buf = new Float32Array(this.cap)
     this.grains.length = 0
     for (let i = 0; i < MAX_GRAINS; i++) this.grains.push(new Grain())
-    this.seedBase = 0xc0ffee
     this.reset()
   }
 
@@ -148,44 +139,55 @@ export class GranularStage implements Stage {
     this.schedRng.seed(this.seedBase ^ 0x5c4ed)
   }
 
-  activeGrainCount(): number {
-    let n = 0
-    for (const g of this.grains) if (g.active) n++
-    return n
+  setLocal(local: number, value: number): void {
+    switch (local) {
+      case SlotParam.BufferSec:
+        this.bufferSec = value
+        break
+      case SlotParam.DelayMs:
+        this.delayMs = value
+        break
+      case SlotParam.DelayDevMs:
+        this.delayDevMs = value
+        break
+      case SlotParam.Density:
+        this.density = value
+        break
+      case SlotParam.LengthMs:
+        this.lengthMs = value
+        break
+      case SlotParam.LengthJitter:
+        this.lengthJitter = value
+        break
+      case SlotParam.PitchSemis:
+        this.pitchSemis = value
+        break
+      case SlotParam.PitchDevSemis:
+        this.pitchDevSemis = value
+        break
+      case SlotParam.ReverseProb:
+        this.reverseProb = value
+        break
+      case SlotParam.EnvShape:
+        this.envShape = Math.round(value) as GrainEnvShape
+        break
+      case SlotParam.Scheduler:
+        this.scheduler = Math.round(value) as GrainScheduler
+        break
+    }
   }
 
-  /**
-   * Ring-write only: keeps the capture rolling while the stage is bypassed,
-   * so re-enabling grains reads the *present* past, not a frozen one from the
-   * moment of bypass.
-   */
-  feed(input: Float32Array, frames: number): void {
+  process(
+    input: Float32Array,
+    bus: DirectionalBus,
+    laneOffset: number,
+    laneCount: number,
+    frames: number,
+  ): void {
     this.writeInput(input, frames)
-  }
+    this.schedule(frames, bus, laneOffset, laneCount)
 
-  /**
-   * Ends every in-flight grain. Called when a bypass fade completes — their
-   * read taps would be ancient by re-enable time, and a paused grain would
-   * resurrect as a burst from the distant past.
-   */
-  retireAll(): void {
-    for (const g of this.grains) g.active = false
-  }
-
-  /**
-   * @param input Mono capture for this block.
-   * @param bus   Destination field, zeroed by the caller. Lanes are ADDED to —
-   *             grains accumulate, and the additive contract matches
-   *             `msf::SourceExpander` so the C++ implementation drops in.
-   *             Directions are assigned at spawn, not accumulated.
-   */
-  process(input: Float32Array, bus: DirectionalBus, frames: number): void {
-    this.writeInput(input, frames)
-    this.schedule(frames, bus)
-
-    // Constant for the block; hoisted out of the per-sample read.
     const used = this.usedCap()
-
     for (const g of this.grains) {
       if (!g.active) continue
       const out = bus.lanes[g.lane]
@@ -201,6 +203,18 @@ export class GranularStage implements Stage {
         g.elapsed++
       }
     }
+  }
+
+  snapshotVoices(out: Float32Array, at: number, max: number): number {
+    let n = 0
+    for (const g of this.grains) {
+      if (!g.active || n >= max) continue
+      out[at + n * 3] = g.azimuthDeg
+      out[at + n * 3 + 1] = g.elevationDeg
+      out[at + n * 3 + 2] = grainEnvelope(g.env, g.elapsed, g.length) * g.gain
+      n++
+    }
+    return n
   }
 
   private writeInput(mono: Float32Array, n: number): void {
@@ -231,7 +245,7 @@ export class GranularStage implements Stage {
     return Math.min(want, this.cap)
   }
 
-  private schedule(n: number, bus: DirectionalBus): void {
+  private schedule(n: number, bus: DirectionalBus, laneOffset: number, laneCount: number): void {
     if (this.density <= 0) return
     const per = this.sampleRate / this.density
     this.spawnCountdown -= n
@@ -239,7 +253,7 @@ export class GranularStage implements Stage {
       // Due at in-block sample n + countdown (countdown ≤ 0 here), so onsets
       // land sr/density apart instead of quantizing to block boundaries.
       const off = clamp(Math.floor(n + this.spawnCountdown), 0, n - 1)
-      this.spawn(off, bus)
+      this.spawn(off, bus, laneOffset, laneCount)
       this.spawnCountdown += this.scheduler === GrainScheduler.Poisson ? this.poissonInterval(per) : per
     }
   }
@@ -255,7 +269,7 @@ export class GranularStage implements Stage {
     return half <= 0 ? 0 : this.rng.nextBipolar() * half
   }
 
-  private spawn(startOffset: number, bus: DirectionalBus): void {
+  private spawn(startOffset: number, bus: DirectionalBus, laneOffset: number, laneCount: number): void {
     let slot: Grain | null = null
     for (const g of this.grains) {
       if (!g.active) {
@@ -272,8 +286,8 @@ export class GranularStage implements Stage {
     // Scatter below unity only: grains thin out, they never spike.
     const gain = dbToGain(-Math.abs(this.centered(this.gainDevDb)))
 
-    const azimuth = this.azimuthDeg + this.centered(this.azimuthDevDeg)
-    const elevation = clamp(this.elevationDeg + this.centered(this.elevationDevDeg), -90, 90)
+    const azimuth = this.target.drawAzimuth(this.rng)
+    const elevation = this.target.drawElevation(this.rng)
 
     let reversed = false
     if (this.reverseProb > 0) reversed = 0.5 * (this.rng.nextBipolar() + 1) < this.reverseProb
@@ -298,16 +312,17 @@ export class GranularStage implements Stage {
     slot.pitch = reversed ? -pf : pf
     slot.gain = gain
     slot.env = this.envShape
+    slot.azimuthDeg = azimuth
+    slot.elevationDeg = elevation
 
     // Round-robin lane dealing (msf::LaneRotor); the lane takes the grain's
     // direction at spawn, so the renderer follows the newest occupant.
-    const laneCount = Math.max(1, bus.laneCount)
-    slot.lane = this.laneSeq % laneCount
+    const lane = laneOffset + (this.laneSeq % Math.max(1, laneCount))
     this.laneSeq++
-    const direction = bus.directions[slot.lane]
+    slot.lane = lane
+    const direction = bus.directions[lane]
     direction.azimuthDeg = azimuth
     direction.elevationDeg = elevation
     direction.distanceM = 1
-
   }
 }

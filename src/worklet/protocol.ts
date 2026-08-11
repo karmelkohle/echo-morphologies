@@ -52,6 +52,11 @@ export type StatusMessage =
       /** Laid out per `MeterSlot` in engine/meters.ts. */
       values: number[]
       /**
+       * Sounding voices for the polar plot, as (slot, azimuthDeg,
+       * elevationDeg, level) quads — flattened, `4 × voiceCount` long.
+       */
+      viz: number[]
+      /**
        * Render blocks processed since the engine started. The main thread
        * compares its rate against `sampleRate / blockSize` to show whether the
        * graph is really keeping up — the smoke test's proof of life.

@@ -92,6 +92,23 @@ so a bypassed stage sounds like a bypassed stage instead of like a bug. Both
 bypasses are verified — comment either call out and the input meter keeps
 reading while the output goes to true silence.
 
+## Pipelines
+
+The engine runs up to three effect pipelines in parallel on the same capture
+(`EngineCore`), each owning four lanes of the directional bus and one
+`SpatialTarget` (azimuth/elevation ± spread). Effects implement the
+`SpatialEffect` interface in `src/engine/effects/` — mono in, lanes out,
+directions set as their material demands: per grain, per echo repeat, per
+reverb line, per partial. Adding an effect is one class file, one entry in
+params.ts (EFFECTS + EFFECT_LOCALS + local specs), one case in EngineCore's
+factory.
+
+Parameters follow a two-space id scheme: globals below 100, slot params at
+100 + 100·slot + local — stable integers end to end, wasm-ready. Effect
+instances are created on first selection (between render quanta, like an
+HRIR swap) and cached; a slot replays its stored locals onto late-created
+instances so values never depend on ordering.
+
 ## The stages as built
 
 **Granular** (`stages/GranularStage.ts`) is a port of `msf::Granular` +

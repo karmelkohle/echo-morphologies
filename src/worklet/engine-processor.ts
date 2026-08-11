@@ -1,7 +1,10 @@
 import { EngineCore } from '../engine/EngineCore'
 import { HrirSet } from '../engine/hrir/HrirSet'
-import { METER_SLOT_COUNT } from '../engine/meters'
+import { METER_SLOT_COUNT, MeterSlot } from '../engine/meters'
 import { PROCESSOR_NAME, type CommandMessage, type StatusMessage } from './protocol'
+
+/** Voices reported per pipeline slot for the polar plot. */
+const VIZ_PER_SLOT = 16
 
 /**
  * The audio-thread host for {@link EngineCore}.
@@ -25,6 +28,7 @@ const SETTLING_BLOCKS = 4
 class EngineProcessor extends AudioWorkletProcessor {
   private readonly core = new EngineCore()
   private readonly meterScratch = new Float32Array(METER_SLOT_COUNT)
+  private readonly vizScratch = new Float32Array(3 * VIZ_PER_SLOT * 4)
 
   private blocks = 0
   private clockGaps = 0
@@ -130,11 +134,14 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.framesSinceReport = 0
 
     this.core.readMeters(this.meterScratch)
+    const voices = this.core.readViz(this.vizScratch, VIZ_PER_SLOT)
+    this.meterScratch[MeterSlot.ActiveVoices] = voices
     // Allocates on the audio thread. Small, bounded, ~30 Hz, and the shared
     // memory alternative costs cross-origin isolation — see protocol.ts.
     this.post({
       type: 'meters',
       values: Array.from(this.meterScratch),
+      viz: Array.from(this.vizScratch.subarray(0, voices * 4)),
       blocks: this.blocks,
       clockGaps: this.clockGaps,
     })
