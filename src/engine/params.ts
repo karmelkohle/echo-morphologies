@@ -26,6 +26,8 @@ export const ParamId = {
   HrirSet: 19,
   /** Routes the dry microphone to both ears instead of the pipelines. */
   DryMonitor: 20,
+  /** IEC A-weighting on the capture, before anything downstream reads it. */
+  CaptureWeighting: 21,
 } as const
 
 export type ParamId = (typeof ParamId)[keyof typeof ParamId]
@@ -249,6 +251,23 @@ export const GLOBAL_PARAMS: readonly ParamSpec[] = [
     format: (v) => (v >= 0.5 ? 'dry mic' : 'pipelines'),
     toggleTone: 'alarm',
     hint: 'Hears the untouched microphone instead of the pipelines — the A/B reference.',
+  },
+  {
+    id: ParamId.CaptureWeighting,
+    key: 'captureWeighting',
+    label: 'Capture weighting',
+    kind: 'toggle',
+    min: 0,
+    max: 1,
+    default: 0,
+    step: 1,
+    unit: '',
+    smoothingMs: 0,
+    format: (v) => (v >= 0.5 ? 'A-weighted' : 'flat'),
+    toggleTone: 'positive',
+    hint:
+      'IEC A-weighting on the microphone before every pipeline and meter — ' +
+      'tames traffic rumble and wind the way the ear’s own contour does.',
   },
 ]
 

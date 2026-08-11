@@ -81,7 +81,7 @@ for (const id of [ParamId.OutputGainDb, ParamId.Mute, ParamId.DryMonitor]) {
   quick.append(buildControl(byId.get(id)!, host).element)
 }
 const config = requireElement<HTMLDivElement>('config-controls')
-for (const id of [ParamId.InputTrimDb, ParamId.HrirSet]) {
+for (const id of [ParamId.InputTrimDb, ParamId.CaptureWeighting, ParamId.HrirSet]) {
   config.append(buildControl(byId.get(id)!, host).element)
 }
 

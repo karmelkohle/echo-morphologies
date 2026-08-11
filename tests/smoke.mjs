@@ -263,6 +263,22 @@ check(parallel.peaks['out L'] > -40, `parallel out L never moved (${parallel.pea
 check(parallel.maxVoices > 0, 'no voices with two pipelines')
 realtime('parallel', parallel.last)
 
+// ── Phase 5b: A-weighted capture stays alive and realtime ──────────────────
+// The fake mic's beep is mid-band, where A-weighting is ~0 dB, so the level
+// assertion holds; the phase proves the filter runs without breaking the
+// graph rather than measuring its curve (that is verified numerically in
+// the filter's design).
+await page.click('#nav-config')
+await page.click('#param-captureWeighting')
+await page.click('#nav-play')
+const weighted = await sampleWindow('A-weighted capture', SAMPLE_MS)
+check(weighted.peaks.input > -43, `A-weighted input died (${weighted.peaks.input} dB)`)
+check(weighted.peaks['out L'] > -43, `A-weighted out L died (${weighted.peaks['out L']} dB)`)
+realtime('a-weighting', weighted.last)
+await page.click('#nav-config')
+await page.click('#param-captureWeighting')
+await page.click('#nav-play')
+
 await drive('s1-effect', 0)
 
 // ── stop ───────────────────────────────────────────────────────────────────

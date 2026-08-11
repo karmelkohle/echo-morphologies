@@ -1,4 +1,5 @@
 import { DirectionalBus } from './DirectionalBus'
+import { AWeighting } from './dsp/AWeighting'
 import { LevelMeter } from './dsp/LevelMeter'
 import { Limiter } from './dsp/Limiter'
 import { SmoothedValue } from './dsp/SmoothedValue'
@@ -70,6 +71,9 @@ export class EngineCore implements AudioEngineCore {
   private readonly muteGain = new SmoothedValue(1)
   /** 0 = pipelines, 1 = dry microphone; ramped so the A/B never clicks. */
   private readonly dryMix = new SmoothedValue(0)
+  /** Capture conditioning: the ear's contour before any pipeline reads. */
+  private readonly aWeighting = new AWeighting()
+  private aWeightingOn = false
 
   private readonly slots: PipelineSlot[] = Array.from({ length: SLOT_COUNT }, () => new PipelineSlot())
   private readonly binaural = new BinauralStage()
@@ -109,6 +113,7 @@ export class EngineCore implements AudioEngineCore {
     this.outputGain.prepare(this.smoothing(ParamId.OutputGainDb, 30), sampleRate)
     this.muteGain.prepare(this.smoothing(ParamId.Mute, 8), sampleRate)
     this.dryMix.prepare(15, sampleRate)
+    this.aWeighting.prepare(sampleRate)
     for (const slot of this.slots) {
       slot.wet.prepare(20, sampleRate)
       for (const instance of slot.instances.values()) instance.prepare(this.cfg)
@@ -177,6 +182,14 @@ export class EngineCore implements AudioEngineCore {
       case ParamId.DryMonitor:
         this.dryMix.setTarget(value >= 0.5 ? 1 : 0)
         break
+      case ParamId.CaptureWeighting: {
+        const on = value >= 0.5
+        // Fresh state on enable: the filter must not ring out whatever was
+        // in it when it was last switched off.
+        if (on && !this.aWeightingOn) this.aWeighting.reset()
+        this.aWeightingOn = on
+        break
+      }
       default:
         break
     }
@@ -273,6 +286,10 @@ export class EngineCore implements AudioEngineCore {
     for (let i = 0; i < n; i++) {
       mono[i] = captured[i] * this.inputTrim.next()
     }
+    // Optional A-weighting, before the meter and before any pipeline writes
+    // the ring — everything downstream, dry monitor included, hears the
+    // conditioned capture, so the A/B stays a comparison of processing.
+    if (this.aWeightingOn) this.aWeighting.process(mono, n)
     this.inputMeter.accumulate(mono, n)
 
     // ═══ 2. PIPELINES ═══════════════════════════════════════════════════════
