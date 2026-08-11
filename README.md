@@ -159,14 +159,34 @@ headset's own mic drops the whole link into the hands-free profile: capture
 falls to speech bandwidth *and the output collapses to one channel* — every
 HRTF cue the renderer produces disappears, which reads exactly like "the
 spatialization doesn't work". It is a Bluetooth constraint, not a DSP bug,
-and native apps hit it identically. The cure is built in: pick the **phone's
-built-in microphone** under *config → calibration* — the earbuds then stay on
-stereo A2DP, capture gets full bandwidth, and the app remembers the choice.
-The app detects the condition (mono output route, or capture below 24 kHz)
-and takes over the banner until it is fixed. Two iOS settings can also fake
-the same symptom: *Spatialize Stereo* (Settings → Bluetooth → AirPods) re-
-renders the field as phantom speakers and should be **off**, and Accessibility
-→ Audio/Visual → *Mono Audio* must be off.
+and native apps hit it identically. The app detects the condition (mono
+output route, or capture below 24 kHz) and takes over the banner until it is
+fixed.
+
+The working combination is **phone microphone in, earbuds stereo out**, and
+it takes two steps on iOS:
+
+1. Pick the **phone's built-in microphone** under *config → calibration*
+   (remembered across sessions). iOS will usually move playback to the
+   phone's *speaker* at this point — that is a live mic over a speaker, so
+   keep the gain down.
+2. Send playback back to the earbuds **while the app runs**: Control Center
+   → long-press the audio card → AirPlay symbol → pick the earbuds. Capture
+   stays on the phone mic; playback returns over stereo A2DP.
+
+Verify with the channel test (low tone left only, high tone right only) and
+the *output channels: 2* status row. If selecting the earbuds flips the
+input back to their mic instead (the banner reappears), that iOS version
+refuses the split for web pages — wired earbuds always work, and the native
+port requests exactly this combination at API level. On iOS 26 with AirPods
+Pro 2 / AirPods 4, the high-quality-recording link may lift the mono
+constraint entirely — the capture-rate row shows it (48 kHz instead of
+~16 kHz with the AirPods mic selected).
+
+Two iOS settings can fake the same symptom: *Spatialize Stereo* (in Control
+Center's volume card while audio plays, or Settings → Bluetooth → AirPods
+while connected) should be **off**, and Accessibility → Audio/Visual → *Mono
+Audio* must be off.
 
 **The screen lock.** Output leaves through a real `<audio>` element rather
 than the bare Web Audio graph, and the page registers as playing media
