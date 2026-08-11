@@ -118,6 +118,33 @@ jobs:
             the push still runs as whoever owns the token"
           fi
 
+      # The target may be public and belongs to a different account than the
+      # source, so no commit may carry any identity beyond the two allowed
+      # ones. Normally the history is already clean; this rewrites any commit
+      # that slipped through (a laptop with an unconfigured user.email) to the
+      # target's account before it ever reaches the target. Deterministic, so
+      # repeated runs produce identical SHAs on the mirror.
+      - name: Normalize commit identities
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          if git log --format='%ae%n%ce' | sort -u | grep -qvE \
+            '^(noreply@anthropic\.com|karmelkohle@users\.noreply\.github\.com)$'; then
+            echo "::warning title=Identity scrubbed::A commit carried a foreign \
+          author or committer; rewritten to the mirror account before pushing."
+            FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --env-filter '
+              case "$GIT_AUTHOR_EMAIL" in
+                noreply@anthropic.com|karmelkohle@users.noreply.github.com) ;;
+                *) export GIT_AUTHOR_NAME="karmelkohle"
+                   export GIT_AUTHOR_EMAIL="karmelkohle@users.noreply.github.com" ;;
+              esac
+              case "$GIT_COMMITTER_EMAIL" in
+                noreply@anthropic.com|karmelkohle@users.noreply.github.com) ;;
+                *) export GIT_COMMITTER_NAME="karmelkohle"
+                   export GIT_COMMITTER_EMAIL="karmelkohle@users.noreply.github.com" ;;
+              esac
+            ' HEAD
+          fi
+
       - name: Push to ${{ vars.MIRROR_REPO }}
         if: steps.config.outputs.configured == 'true'
         env:
