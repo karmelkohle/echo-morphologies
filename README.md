@@ -175,13 +175,30 @@ it takes two steps on iOS:
    stays on the phone mic; playback returns over stereo A2DP.
 
 Verify with the channel test (low tone left only, high tone right only) and
-the *output channels: 2* status row. If selecting the earbuds flips the
-input back to their mic instead (the banner reappears), that iOS version
-refuses the split for web pages — wired earbuds always work, and the native
-port requests exactly this combination at API level. On iOS 26 with AirPods
-Pro 2 / AirPods 4, the high-quality-recording link may lift the mono
-constraint entirely — the capture-rate row shows it (48 kHz instead of
-~16 kHz with the AirPods mic selected).
+the *output channels: 2* status row.
+
+**Field-tested result (iOS Safari, AirPods, 2026-08):** the split is refused.
+Even with the phone microphone capturing and playback re-routed to the
+AirPods, Safari classifies any live-microphone session with Bluetooth output
+as a call — the phone shows in-call state and the AirPods run the hands-free
+profile: mono, both ears identical. Web content has no API to request the
+A2DP-output-with-other-mic combination; this is a Safari session policy, not
+a bug in this app. What actually works with this setup:
+
+- **Wired earbuds/headphones** (USB-C, or any interface): full stereo output
+  with any microphone, no protocol fight. The zero-effort answer today.
+- **The native port**: AVAudioSession can request exactly the split
+  (`playAndRecord` + `allowBluetoothA2DP` + preferred input built-in) —
+  same AirPods, stereo out, phone mic in.
+- **iOS 26 + AirPods Pro 2 / AirPods 4**: the high-quality-recording link
+  may lift the constraint with the AirPods' own mic — the capture-rate row
+  shows it (48 kHz instead of ~16 kHz with the AirPods mic selected).
+- **A capture ↔ playback cycle in the app** (not built yet): hold the mic
+  only while gathering material, release it — Bluetooth returns to stereo
+  A2DP within a couple of seconds — and granulate the frozen buffer in full
+  binaural while walking. Changes the piece's interaction model from
+  continuous processing to phrase-based capture, which is why it is an
+  artistic decision rather than a default.
 
 Two iOS settings can fake the same symptom: *Spatialize Stereo* (in Control
 Center's volume card while audio plays, or Settings → Bluetooth → AirPods
