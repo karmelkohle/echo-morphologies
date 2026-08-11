@@ -154,15 +154,26 @@ Layout:
 
 ## Things worth knowing before building on this
 
-**Opening the microphone costs you the playback bandwidth.** Bluetooth earbuds
-cannot run a high-quality output stream and a microphone at the same time; asking
-for the mic switches AirPods into a bidirectional call mode and both directions
-drop to speech bandwidth. This is a Bluetooth constraint, not a browser one — a
-native iOS app hits it identically, so it is a fact about the piece rather than a
-problem the port will solve. The status panel reports the negotiated *capture
-rate* so you can see exactly what you got on your hardware and OS version, and
-it is worth checking that number early, because it bounds what the granulator
-has to work with. Wired earbuds or a separate interface side-step it entirely.
+**The AirPods microphone makes the output MONO.** Opening a Bluetooth
+headset's own mic drops the whole link into the hands-free profile: capture
+falls to speech bandwidth *and the output collapses to one channel* — every
+HRTF cue the renderer produces disappears, which reads exactly like "the
+spatialization doesn't work". It is a Bluetooth constraint, not a DSP bug,
+and native apps hit it identically. The cure is built in: pick the **phone's
+built-in microphone** under *config → calibration* — the earbuds then stay on
+stereo A2DP, capture gets full bandwidth, and the app remembers the choice.
+The app detects the condition (mono output route, or capture below 24 kHz)
+and takes over the banner until it is fixed. Two iOS settings can also fake
+the same symptom: *Spatialize Stereo* (Settings → Bluetooth → AirPods) re-
+renders the field as phantom speakers and should be **off**, and Accessibility
+→ Audio/Visual → *Mono Audio* must be off.
+
+**The screen lock.** Output leaves through a real `<audio>` element rather
+than the bare Web Audio graph, and the page registers as playing media
+(lock-screen card included) — on current iOS that keeps the session alive
+through a screen lock, where a bare graph is suspended. Best-effort by
+platform design: if iOS still suspends after minutes in a pocket, that is the
+one limit the native port removes for good.
 
 **The gain fader is not the phone's volume control.** No web API can set the iOS
 system output level — `HTMLMediaElement.volume` is ignored there too — so the

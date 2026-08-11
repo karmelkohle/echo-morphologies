@@ -77,7 +77,19 @@
       <main id="page-config" class="page" hidden>
         <section class="panel" aria-labelledby="cal-heading">
           <h2 id="cal-heading">Calibration</h2>
-          <div class="controls" id="config-controls"></div>
+          <div class="controls" id="config-controls">
+            <div class="control" id="input-device-control" hidden>
+              <div class="control-head">
+                <label class="control-label" for="input-device">Microphone</label>
+              </div>
+              <select class="enum" id="input-device"></select>
+              <p class="control-hint">
+                With Bluetooth earbuds, pick the phone's built-in microphone:
+                using the earbuds' own mic drops the link into mono call mode
+                and every spatial cue collapses.
+              </p>
+            </div>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="chain-heading">

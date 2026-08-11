@@ -7,7 +7,9 @@ import {
   ScreenWakeLock,
   declareAudioSession,
   describeCapture,
+  listAudioInputs,
   openCapture,
+  type AudioInputDevice,
   type CaptureInfo,
 } from './session'
 
@@ -48,6 +50,14 @@ export interface EngineStatus {
   /** One actionable sentence, when there is one. */
   remedy: string | null
   hrtf: HrtfStatus
+  /** Microphones the user may pick from; labeled once permission exists. */
+  inputDevices: AudioInputDevice[]
+  /** The picked microphone, or null for the platform default. */
+  inputDeviceId: string | null
+  /** Channels the output route actually carries; 1 = spatial cues collapse. */
+  outputChannels: number | null
+  /** A route problem worth shouting about (mono output, call-mode capture). */
+  routeWarning: string | null
 }
 
 export interface MeterSnapshot {
@@ -114,14 +124,33 @@ export class AudioEngine {
     message: null,
     remedy: null,
     hrtf: { state: 'none' },
+    inputDevices: [],
+    inputDeviceId: null,
+    outputChannels: null,
+    routeWarning: null,
   }
 
   /** Guards against a slow fetch overwriting a newer set choice. */
   private hrirLoadToken = 0
 
+  /**
+   * Output leaves through a real `<audio>` element rather than
+   * `context.destination`: a page that is *playing media* keeps its audio
+   * session alive through an iOS screen lock (with the play-and-record
+   * session declared), where a bare Web Audio graph is suspended. The same
+   * trick every web conferencing app uses.
+   */
+  private audioElement: HTMLAudioElement | null = null
+
+  private static readonly INPUT_DEVICE_KEY = 'echo-morph.inputDevice'
+
   constructor() {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void this.recover()
+    })
+    // Earbuds appear and vanish mid-session; keep the picker honest.
+    navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+      if (this.node) void this.refreshInputDevices()
     })
   }
 
@@ -209,7 +238,16 @@ export class AudioEngine {
       context = new AudioContext({ latencyHint: 'interactive' })
       const unlocked = context.resume()
 
-      stream = await openCapture()
+      const savedDevice = this.readSavedInputDevice()
+      try {
+        stream = await openCapture(savedDevice ?? undefined)
+      } catch (error) {
+        // The remembered microphone may be gone (unpaired earbuds, another
+        // machine). The default input is the right fallback, not a failure.
+        if (savedDevice === null) throw error
+        this.forgetSavedInputDevice()
+        stream = await openCapture()
+      }
       await unlocked
       await context.audioWorklet.addModule(WORKLET_URL)
 
@@ -232,7 +270,7 @@ export class AudioEngine {
       }
 
       source.connect(node)
-      node.connect(context.destination)
+      await this.routeOutput(context, node)
 
       context.onstatechange = () => this.handleContextState()
 
@@ -249,16 +287,25 @@ export class AudioEngine {
       this.renderRatio = null
 
       await this.wakeLock.acquire()
+      this.installMediaSession()
 
+      const capture = describeCapture(stream)
+      const outputChannels = context.destination.maxChannelCount || 2
       this.patchStatus({
         state: context.state === 'running' ? 'running' : 'interrupted',
         sampleRate: context.sampleRate,
         baseLatencyMs: toMs(context.baseLatency),
         outputLatencyMs: toMs((context as AudioContext & { outputLatency?: number }).outputLatency),
-        capture: describeCapture(stream),
+        capture,
         audioSessionApplied,
         screenLockHeld: this.wakeLock.supported,
+        inputDeviceId: savedDevice,
+        outputChannels,
+        routeWarning: routeWarningFor(capture, outputChannels),
       })
+
+      // Labels only exist after permission, so the device list comes last.
+      void this.refreshInputDevices()
     } catch (error) {
       // Nothing half-built is left running: a stream still open holds the
       // microphone indicator on and keeps the AirPods in call mode.
@@ -287,6 +334,13 @@ export class AudioEngine {
     if (this.node) this.node.port.onmessage = null
     this.stream?.getTracks().forEach((track) => track.stop())
 
+    if (this.audioElement) {
+      this.audioElement.onpause = null
+      this.audioElement.pause()
+      this.audioElement.srcObject = null
+      this.audioElement = null
+    }
+
     const context = this.context
     this.context = null
     this.stream = null
@@ -310,7 +364,124 @@ export class AudioEngine {
       message: null,
       remedy: null,
       hrtf: { state: 'none' },
+      outputChannels: null,
+      routeWarning: null,
     })
+  }
+
+  /**
+   * Swaps the capture to another microphone while the graph keeps running.
+   * The choice is remembered for the next start.
+   */
+  async setInputDevice(deviceId: string | null): Promise<void> {
+    if (deviceId) localStorage.setItem(AudioEngine.INPUT_DEVICE_KEY, deviceId)
+    else this.forgetSavedInputDevice()
+    this.patchStatus({ inputDeviceId: deviceId })
+
+    const context = this.context
+    const node = this.node
+    if (!context || !node) return
+
+    try {
+      const stream = await openCapture(deviceId ?? undefined)
+      // New source first, then retire the old — no capture gap.
+      const source = context.createMediaStreamSource(stream)
+      source.connect(node)
+      this.source?.disconnect()
+      this.stream?.getTracks().forEach((track) => track.stop())
+      this.source = source
+      this.stream = stream
+
+      const capture = describeCapture(stream)
+      const outputChannels = context.destination.maxChannelCount || 2
+      this.patchStatus({
+        capture,
+        outputChannels,
+        routeWarning: routeWarningFor(capture, outputChannels),
+      })
+      void this.refreshInputDevices()
+    } catch (error) {
+      this.patchStatus({
+        message:
+          error instanceof AudioPermissionError
+            ? error.message
+            : 'That microphone could not be opened.',
+        remedy: 'The previous input keeps running; pick another device.',
+      })
+    }
+  }
+
+  private readSavedInputDevice(): string | null {
+    try {
+      return localStorage.getItem(AudioEngine.INPUT_DEVICE_KEY)
+    } catch {
+      return null
+    }
+  }
+
+  private forgetSavedInputDevice(): void {
+    try {
+      localStorage.removeItem(AudioEngine.INPUT_DEVICE_KEY)
+    } catch {
+      // Storage may be unavailable (private mode); the choice just won't stick.
+    }
+  }
+
+  private async refreshInputDevices(): Promise<void> {
+    const inputDevices = await listAudioInputs()
+    this.patchStatus({ inputDevices })
+  }
+
+  /**
+   * Connects the worklet's output to the speakers through an `<audio>`
+   * element (see the field comment for why). Falls back to a direct
+   * destination connection when the element refuses to play.
+   */
+  private async routeOutput(context: AudioContext, node: AudioWorkletNode): Promise<void> {
+    try {
+      const destination = context.createMediaStreamDestination()
+      node.connect(destination)
+      const element = new Audio()
+      element.srcObject = destination.stream
+      element.setAttribute('playsinline', '')
+      await element.play()
+      // iOS pauses the element on route changes and interruptions; a paused
+      // element while running means silence, so restart it.
+      element.onpause = () => {
+        if (this.context) void element.play().catch(() => undefined)
+      }
+      this.audioElement = element
+    } catch {
+      this.audioElement = null
+      node.connect(context.destination)
+    }
+  }
+
+  /**
+   * Lock-screen presence: with media playing and handlers registered, iOS
+   * shows the app on the lock screen and keeps the session alive; the pause
+   * handler doubles as a remote mute.
+   */
+  private installMediaSession(): void {
+    const session = (navigator as Navigator & { mediaSession?: MediaSession }).mediaSession
+    if (!session) return
+    try {
+      session.metadata = new MediaMetadata({
+        title: 'echo morphologies',
+        artist: 'live spatial re-composition',
+      })
+      session.playbackState = 'playing'
+      session.setActionHandler('pause', () => {
+        this.setParam(ParamId.Mute, 1)
+        session.playbackState = 'paused'
+      })
+      session.setActionHandler('play', () => {
+        this.setParam(ParamId.Mute, 0)
+        session.playbackState = 'playing'
+      })
+    } catch {
+      // MediaSession is progressive enhancement; absence changes nothing.
+    }
   }
 
   private send(message: CommandMessage): void {
@@ -411,7 +582,13 @@ export class AudioEngine {
   private async recover(): Promise<void> {
     await this.wakeLock.refresh()
     const context = this.context
-    if (!context || context.state === 'running') return
+    if (!context) return
+    // The output element pauses across locks and route changes even when the
+    // context survives; a paused element is silence, so always nudge it.
+    if (this.audioElement && this.audioElement.paused) {
+      void this.audioElement.play().catch(() => undefined)
+    }
+    if (context.state === 'running') return
     try {
       await context.resume()
     } catch {
@@ -431,4 +608,30 @@ export class AudioEngine {
 
 function toMs(seconds: number | undefined): number | null {
   return typeof seconds === 'number' && Number.isFinite(seconds) ? seconds * 1000 : null
+}
+
+/**
+ * Names the route problems that silently destroy the piece. A Bluetooth
+ * headset whose own microphone is open drops to the hands-free profile:
+ * capture falls to speech bandwidth and — the part that masquerades as a DSP
+ * bug — the OUTPUT goes mono, collapsing every spatial cue the renderer
+ * produces. The cure is capturing from the phone's built-in microphone so
+ * the earbuds stay on stereo A2DP.
+ */
+function routeWarningFor(capture: CaptureInfo, outputChannels: number): string | null {
+  if (outputChannels < 2) {
+    return (
+      'The output route is MONO — spatialization cannot be heard. This is ' +
+      'Bluetooth call mode: pick the phone’s built-in microphone under ' +
+      'config → calibration so the earbuds keep their stereo profile.'
+    )
+  }
+  if (capture.sampleRate !== null && capture.sampleRate < 24000) {
+    return (
+      `Capture is running at ${Math.round(capture.sampleRate / 1000)} kHz — ` +
+      'Bluetooth call mode. Pick the phone’s built-in microphone under ' +
+      'config → calibration for full bandwidth and safe stereo output.'
+    )
+  }
+  return null
 }

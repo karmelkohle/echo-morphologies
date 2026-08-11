@@ -85,6 +85,37 @@ for (const id of [ParamId.InputTrimDb, ParamId.HrirSet]) {
   config.append(buildControl(byId.get(id)!, host).element)
 }
 
+// ── microphone picker (host-level, not an engine param) ───────────────────
+
+const inputDeviceControl = requireElement<HTMLDivElement>('input-device-control')
+const inputDeviceSelect = requireElement<HTMLSelectElement>('input-device')
+
+inputDeviceSelect.addEventListener('change', () => {
+  const value = inputDeviceSelect.value
+  void engine.setInputDevice(value === '' ? null : value)
+})
+
+function renderInputDevices(next: EngineStatus): void {
+  const devices = next.inputDevices
+  if (devices.length === 0) {
+    inputDeviceControl.hidden = true
+    return
+  }
+  inputDeviceControl.hidden = false
+  inputDeviceSelect.replaceChildren()
+  const auto = document.createElement('option')
+  auto.value = ''
+  auto.textContent = 'system default'
+  inputDeviceSelect.append(auto)
+  for (const device of devices) {
+    const option = document.createElement('option')
+    option.value = device.deviceId
+    option.textContent = device.label
+    inputDeviceSelect.append(option)
+  }
+  inputDeviceSelect.value = next.inputDeviceId ?? ''
+}
+
 // ── polar plot (before the slots: their builders push state into it) ──────
 
 const plot = new PolarPlot(requireElement<HTMLCanvasElement>('polar-plot'))
@@ -248,13 +279,19 @@ function renderStatus(next: EngineStatus): void {
   transport.dataset.mode = stopping ? 'stop' : 'start'
   headphoneWarning.hidden = stopping
 
-  if (next.message) {
+  renderInputDevices(next)
+
+  // Route problems outrank ordinary messages: a mono route silently unmakes
+  // the whole piece, so it takes over the banner until fixed.
+  const message = next.routeWarning ?? next.message
+  const remedyText = next.routeWarning ? null : next.remedy
+  if (message) {
     notice.hidden = false
-    notice.textContent = next.message
-    if (next.remedy) {
+    notice.textContent = message
+    if (remedyText) {
       const remedy = document.createElement('span')
       remedy.className = 'remedy'
-      remedy.textContent = next.remedy
+      remedy.textContent = remedyText
       notice.append(remedy)
     }
   } else {
@@ -287,6 +324,11 @@ function renderStatus(next: EngineStatus): void {
     'ios audio session',
     next.audioSessionApplied ? 'play-and-record' : 'not available',
     next.audioSessionApplied ? 'good' : 'neutral',
+  )
+  status.set(
+    'output channels',
+    next.outputChannels !== null ? String(next.outputChannels) : '—',
+    next.outputChannels !== null && next.outputChannels < 2 ? 'alert' : 'neutral',
   )
   status.set('screen wake lock', next.screenLockHeld ? 'held' : 'not available')
   status.set('display mode', displayMode())

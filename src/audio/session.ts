@@ -66,7 +66,7 @@ export function declareAudioSession(type: 'play-and-record' | 'playback' | 'auto
  * They are requested, not demanded: plain values leave them advisory, so a
  * platform that refuses still yields a stream rather than an exception.
  */
-export async function openCapture(): Promise<MediaStream> {
+export async function openCapture(deviceId?: string): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new AudioPermissionError(
       'This browser exposes no microphone API on this page.',
@@ -83,6 +83,10 @@ export async function openCapture(): Promise<MediaStream> {
         noiseSuppression: false,
         autoGainControl: false,
         channelCount: 1,
+        // `exact` on purpose: falling back to another microphone silently
+        // would defeat the reason a device gets picked at all — keeping the
+        // AirPods out of mono call mode.
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
       video: false,
     })
@@ -107,6 +111,32 @@ export async function openCapture(): Promise<MediaStream> {
       'Close other apps that might be holding the microphone, then start again.',
       { cause: error },
     )
+  }
+}
+
+export interface AudioInputDevice {
+  deviceId: string
+  label: string
+}
+
+/**
+ * The microphones the page may pick from. Labels are only populated once a
+ * capture permission has been granted, so call this after the stream opens.
+ *
+ * Why this matters here: opening a Bluetooth headset's own microphone drops
+ * the whole link into the hands-free profile, whose *output* is mono — every
+ * spatial cue the renderer produces collapses. Selecting the phone's built-in
+ * microphone keeps the earbuds on stereo A2DP.
+ */
+export async function listAudioInputs(): Promise<AudioInputDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return []
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    return devices
+      .filter((d) => d.kind === 'audioinput' && d.deviceId !== '')
+      .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `microphone ${i + 1}` }))
+  } catch {
+    return []
   }
 }
 
