@@ -17,14 +17,28 @@ is the answer.
 
 1. Xcode → *File → New → Project → iOS → App*.
    - Product name: `RouteProbe` · Interface: SwiftUI · Language: Swift.
-2. Delete the generated `ContentView.swift`; drag the three files from this
-   folder into the project (copy items if needed):
-   `RouteProbeApp.swift`, `AudioRouteProbe.swift`, `ProbeView.swift`
-   (`RouteProbeApp.swift` replaces the generated `@main` file — delete that
-   one too).
-3. Target → *Info* → add **Privacy – Microphone Usage Description**
-   (`NSMicrophoneUsageDescription`), e.g. "Route diagnostics".
-4. Signing: your personal team; run on the iPhone (a free account is fine).
+2. The template generates two Swift files. Note that the generated `@main`
+   entry file is itself named `RouteProbeApp.swift` — the same name as the
+   one in this folder, so do **not** drag that one in:
+   - Delete `ContentView.swift` (right-click → Delete → Move to Trash).
+   - Open the generated `RouteProbeApp.swift` and change `ContentView()`
+     to `ProbeView()` — that is this repo's version in one edit.
+   - Drag in only `AudioRouteProbe.swift` and `ProbeView.swift`, with
+     *Copy items if needed* checked and the RouteProbe target ticked.
+3. Microphone permission (modern Xcode has no visible Info.plist):
+   - Click the blue **RouteProbe** project icon at the top of the file
+     navigator.
+   - In the editor's left column, under **TARGETS**, select **RouteProbe**
+     (not the PROJECT entry above it).
+   - Open the **Info** tab (between *Signing & Capabilities* and *Build
+     Settings*).
+   - In **Custom iOS Target Properties**, hover any row → click the **＋**
+     that appears → type `mic` → pick **Privacy – Microphone Usage
+     Description** → any value, e.g. `Route diagnostics`.
+4. *Signing & Capabilities* → Team: your personal Apple ID; select the
+   iPhone as run destination; Run. First time on the phone you may need
+   Developer Mode (Settings → Privacy & Security) and to trust the
+   certificate (Settings → General → VPN & Device Management).
 
 ## Read the result
 
